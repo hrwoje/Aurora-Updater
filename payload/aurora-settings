@@ -528,7 +528,13 @@ class AuroraSettingsApp(Gtk.Application):
         license_label.set_margin_end(12)
         license_label.set_margin_top(8)
         license_label.set_margin_bottom(8)
-        license_footer.set_child(license_label)
+        license_button = Gtk.Button(label="Licentie bekijken")
+        license_button.set_halign(Gtk.Align.START)
+        license_button.connect("clicked", lambda *_: self.show_license_viewer())
+        license_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        license_box.append(license_label)
+        license_box.append(license_button)
+        license_footer.set_child(license_box)
         content_box.append(license_footer)
         main_box.append(content_box)
 
@@ -570,6 +576,44 @@ class AuroraSettingsApp(Gtk.Application):
 
         win.set_child(main_box)
         win.present()
+
+    def show_license_viewer(self):
+        """Open the Aurora license in a strictly read-only viewer."""
+        candidates = [
+            os.path.expanduser("~/.local/share/doc/aurora/AURORA-LICENSE.txt"),
+            "/usr/share/doc/aurora/AURORA-LICENSE.txt",
+            "/usr/share/doc/aurora/LICENSE",
+            "/home/hrwoje/Aurora-Updater-work/LICENSE",
+        ]
+        text = None
+        source = None
+        for candidate in candidates:
+            try:
+                if os.path.isfile(candidate):
+                    text = open(candidate, "r", encoding="utf-8").read()
+                    source = candidate
+                    break
+            except OSError:
+                continue
+        if text is None:
+            text = "Aurora Proprietary License v1.0\n\nHet licentiebestand is nog niet geïnstalleerd. Werk Aurora bij om de volledige licentie te installeren."
+            source = "niet geïnstalleerd"
+        viewer = Gtk.Window(title="Aurora-licentie — alleen lezen", transient_for=self.win)
+        viewer.set_modal(True)
+        viewer.set_default_size(820, 620)
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        outer.set_margin_top(12); outer.set_margin_bottom(12); outer.set_margin_start(12); outer.set_margin_end(12)
+        heading = Gtk.Label(label="<b>Aurora Proprietary License v1.0</b>", use_markup=True, xalign=0.0)
+        outer.append(heading)
+        source_label = Gtk.Label(label=f"Bron: {source}", xalign=0.0)
+        source_label.add_css_class("dim-label")
+        outer.append(source_label)
+        scroll = Gtk.ScrolledWindow(); scroll.set_vexpand(True); scroll.set_hexpand(True)
+        text_view = Gtk.TextView(); text_view.set_editable(False); text_view.set_cursor_visible(False); text_view.set_monospace(True); text_view.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
+        text_view.get_buffer().set_text(text)
+        scroll.set_child(text_view); outer.append(scroll)
+        close = Gtk.Button(label="Sluiten"); close.set_halign(Gtk.Align.END); close.connect("clicked", lambda *_: viewer.close()); outer.append(close)
+        viewer.set_child(outer); viewer.present()
 
     # ── Hulpfuncties voor Cards & UI ───────────────────────────────────────
     def _make_responsive(self, widget):

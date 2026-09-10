@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": "2026.09.10.3",
+  "version": "2026.09.10.4",
   "channel": "stable",
-  "release_notes": "Aurora Proprietary License v1.0, copyright attribution and in-app license footer added. The license travels with Aurora installations; third-party components retain their own licenses.",
+  "release_notes": "Added a strictly read-only license viewer to Aurora Settings with local license source detection.",
   "required_packages": [
     "wl-clipboard",
     "ImageMagick",
@@ -21,7 +21,7 @@
     {
       "source": "payload/aurora-settings",
       "target": "~/.local/bin/aurora-settings",
-      "sha256": "c4756ffb237e0614576e13df1dbd94305e3d930d7ace3d47ed3fa0552cd7d508",
+      "sha256": "5cc0c7b137a6fc1eb8c2fa5fe26e9edf7929444eddc6d5e9866ee7b7da1075b7",
       "mode": "755"
     },
     {

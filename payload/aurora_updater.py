@@ -13,7 +13,7 @@ def notify(title,message):
         except (OSError,subprocess.SubprocessError): pass
 def fetch(url):
     req=urllib.request.Request(url,headers={"User-Agent":"Aurora-Updater/1"})
-    with urllib.request.urlopen(req,timeout=25) as response: return response.read()
+    with urllib.request.urlopen(req,timeout=12) as response: return response.read()
 def manifest():
     data=json.loads(fetch(MANIFEST_URL).decode())
     if data.get("schema")!=1 or not isinstance(data.get("version"),str) or not data.get("version"): raise ValueError("ongeldig Aurora-manifestschema")
@@ -159,7 +159,13 @@ def build_card():
             for line in proc.stdout:
                 try: event = json.loads(line); GLib.idle_add(handle, event)
                 except ValueError: pass
-            rc = proc.wait()
+            try:
+                rc = proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+                GLib.idle_add(handle, {"event": "result", "ok": False, "error": "De Aurora-repository antwoordde niet binnen 30 seconden. Controleer internet, DNS of GitHub."})
+                rc = 124
             def done():
                 running[0] = False; check_button.set_sensitive(True)
                 if mode == "--install" and rc == 0: install_button.set_sensitive(False)

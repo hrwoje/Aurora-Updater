@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": "2026.09.10.8",
+  "version": "2026.09.10.9",
   "channel": "stable",
-  "release_notes": "Removed synthetic progress animation. Scan status now changes only from real repository results; installation progress uses verified payload events.",
+  "release_notes": "Added bounded network and subprocess timeouts so repository checks always finish with a real result.",
   "required_packages": [
     "wl-clipboard",
     "ImageMagick",
@@ -15,7 +15,7 @@
     {
       "source": "payload/aurora_updater.py",
       "target": "~/.local/bin/aurora_updater.py",
-      "sha256": "839aebedfc57d34a04a04743fa6146828e86b8ae8872af765102f068b3bece08",
+      "sha256": "fd5df3affbf29731f347308cd2ba56ca324d4f10d00329c691023132284361af",
       "mode": "755"
     },
     {
@@ -74,5 +74,5 @@
     "file": "LICENSE",
     "copyright": "Copyright (c) 2026 Hrwoje Dabo, media4now.nl"
   },
-  "release_name": "Aurora Updates Verified Status"
+  "release_name": "Aurora Updates Network Timeout"
 }

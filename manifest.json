@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": "2026.09.10.16",
+  "version": "2026.09.10.17",
   "channel": "stable",
-  "release_notes": "Downgrade-bescherming: een bron die ouder is dan de geïnstalleerde versie wordt nooit aangeboden of geïnstalleerd. Verder: update-vergrendeling, opruiming van staging en oude reservekopieën, en de eerdere fixes.",
+  "release_notes": "Updates-pagina en Aurora-updatekaart professioneel herzien: gekleurde statussen, XBPS+Flatpak-samenvatting, elapsed-timer, rc-controle met duidelijke foutmeldingen, log met auto-scroll, repo-rijen met statusbadges, veiliger stoppen en langere watchdog voor installaties.",
   "required_packages": [
     "wl-clipboard",
     "ImageMagick",
@@ -16,13 +16,13 @@
     {
       "source": "payload/aurora_updater.py",
       "target": "~/.local/bin/aurora_updater.py",
-      "sha256": "369f14c7f32f02d0dd2d58fc6aad9f2f55e9aff6c99d944b3791878d886508f3",
+      "sha256": "851dc739b2b3d76660dc6f9cf86bb13eac3f1e4b08f9d9bd98a38d502b2fa20f",
       "mode": "755"
     },
     {
       "source": "payload/aurora-settings",
       "target": "~/.local/bin/aurora-settings",
-      "sha256": "a00ebbdfd0e9c6a0cfa74c5b1b29f44ee178fd448ab33e94cbeb351192a915c8",
+      "sha256": "dd3092ebb2aa280ee53ff256e3c799cce8c500f975f63bc0427771f9cfa68226",
       "mode": "755"
     },
     {
@@ -81,5 +81,5 @@
     "file": "LICENSE",
     "copyright": "Copyright (c) 2026 Hrwoje Dabo, media4now.nl"
   },
-  "release_name": "Aurora updater: downgrade-bescherming"
+  "release_name": "Aurora Settings: professionele update-GUI"
 }

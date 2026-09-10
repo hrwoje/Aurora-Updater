@@ -190,45 +190,93 @@ def build_card():
     for side in (16,):
         outer.set_margin_start(side); outer.set_margin_end(side)
     outer.set_margin_top(14); outer.set_margin_bottom(14)
+
+    header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
     logo_path = "/usr/share/aurora/logo.png"
     if os.path.exists(logo_path):
         try:
-            pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(logo_path, 72, 72, True)
+            pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(logo_path, 56, 56, True)
             logo = Gtk.Image.new_from_pixbuf(pix)
         except Exception:
             logo = Gtk.Image.new_from_icon_name("aurora")
     else:
         logo = Gtk.Image.new_from_icon_name("aurora")
-    logo.set_pixel_size(72); logo.set_halign(Gtk.Align.CENTER); logo.set_tooltip_text("Aurora OS"); outer.append(logo)
-    title = Gtk.Label(label="<b>Aurora Updates</b>", use_markup=True, xalign=0.5); title.add_css_class("title-3"); outer.append(title)
-    intro = Gtk.Label(label="Werk Aurora-componenten bij via de beheerde GitHub-repository. Void- en Flatpak-updates blijven in hun eigen beheerpagina.", wrap=True, xalign=0.0); outer.append(intro)
-    build_info = Gtk.Label(label="Updater-build 2026.09.10.15 · echte repositorystatus · update-vergrendeling · watchdog 30 s", xalign=0.0); build_info.add_css_class("dim-label"); outer.append(build_info)
-    status = Gtk.Label(label="Nog niet gecontroleerd.", wrap=True, xalign=0.0); outer.append(status)
+    logo.set_pixel_size(56); logo.set_tooltip_text("Aurora OS"); header.append(logo)
+    head_txt = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+    head_txt.set_hexpand(True)
+    title = Gtk.Label(label="<b>Aurora Updates</b>", use_markup=True, xalign=0.0); title.add_css_class("title-3"); head_txt.append(title)
+    build_info = Gtk.Label(label="Build 2026.09.10.17 · GitHub-bron · update-vergrendeling · geen downgrades", xalign=0.0); build_info.add_css_class("dim-label"); head_txt.append(build_info)
+    header.append(head_txt)
+    outer.append(header)
+
+    status = Gtk.Label(label="Nog niet gecontroleerd.", wrap=True, selectable=True, xalign=0.0)
+    outer.append(status)
+
+    def set_status(text, kind=None):
+        for css in ("success", "warning", "error"):
+            status.remove_css_class(css)
+        if kind:
+            status.add_css_class(kind)
+        status.set_text(text)
+
     previous = installed()
-    previous_text = "Geïnstalleerde versie: nog niet vastgesteld"
+    installed_info = Gtk.Label(label="Geïnstalleerde versie: nog niet vastgesteld", wrap=True, xalign=0.0)
+    installed_info.add_css_class("dim-label")
     if previous.get("version"):
-        previous_text = f"Geïnstalleerd: {previous.get('release_name', previous.get('version'))} · versie {previous.get('version')} · {previous.get('installed_at', 'onbekende datum')}"
-    installed_info = Gtk.Label(label=previous_text, wrap=True, xalign=0.0); installed_info.add_css_class("dim-label"); outer.append(installed_info)
-    progress = Gtk.ProgressBar(); progress.set_show_text(True); progress.set_fraction(0); progress.set_text("Wachten"); outer.append(progress)
-    notes = Gtk.Label(label="", wrap=True, xalign=0.0); notes.add_css_class("dim-label"); outer.append(notes)
+        installed_info.set_text(f"Geïnstalleerd: {previous.get('release_name', previous.get('version'))} · versie {previous.get('version')} · {previous.get('installed_at', 'onbekende datum')}")
+    outer.append(installed_info)
+
+    progress_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+    progress = Gtk.ProgressBar(); progress.set_show_text(True); progress.set_fraction(0); progress.set_text("Wachten"); progress.set_hexpand(True)
+    elapsed_lbl = Gtk.Label(label=""); elapsed_lbl.add_css_class("monospace"); elapsed_lbl.add_css_class("dim-label")
+    progress_row.append(progress); progress_row.append(elapsed_lbl)
+    outer.append(progress_row)
+
+    notes = Gtk.Label(label="", wrap=True, selectable=True, xalign=0.0); notes.add_css_class("dim-label")
+    outer.append(notes)
+
     buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-    check_button, install_button = Gtk.Button(label="Controleren"), Gtk.Button(label="Aurora bijwerken")
-    stop_button = Gtk.Button(label="Controle stoppen"); stop_button.set_sensitive(False)
-    install_button.set_sensitive(False); buttons.append(check_button); buttons.append(install_button); buttons.append(stop_button); outer.append(buttons)
+    check_button = Gtk.Button(label="Controleren"); check_button.set_icon_name("view-refresh-symbolic")
+    install_button = Gtk.Button(label="Aurora bijwerken"); install_button.set_icon_name("software-update-available-symbolic"); install_button.add_css_class("suggested-action")
+    stop_button = Gtk.Button(label="Stoppen"); stop_button.set_sensitive(False)
+    install_button.set_sensitive(False)
+    buttons.append(check_button); buttons.append(install_button); buttons.append(stop_button)
+    outer.append(buttons)
+
     running = [False]
     process_ref = [None]
     watchdog_id = [None]
+    timer_id = [None]
+    run_start = [0.0]
+
+    def start_timer():
+        run_start[0] = time.monotonic()
+        elapsed_lbl.set_text("0 s")
+        def tick():
+            elapsed_lbl.set_text(f"{int(time.monotonic() - run_start[0])} s")
+            return True
+        timer_id[0] = GLib.timeout_add(1000, tick)
+
+    def stop_timer():
+        if timer_id[0] is not None:
+            GLib.source_remove(timer_id[0])
+            timer_id[0] = None
+        elapsed_lbl.set_text("")
 
     def handle(event):
-        if event.get("event") == "status": status.set_text(event.get("message", "Bezig…"))
+        if event.get("event") == "status":
+            set_status(event.get("message", "Bezig…"))
         elif event.get("event") == "progress":
-            progress.set_fraction(max(0.0, min(1.0, float(event.get("fraction", 0)))))
-            progress.set_text(event.get("message", "Bezig…"))
+            fraction = max(0.0, min(1.0, float(event.get("fraction", 0))))
+            progress.set_fraction(fraction)
+            progress.set_text(f"{fraction:.0%} · {event.get('message', 'Bezig…')}")
         elif event.get("event") == "result":
             running[0] = False
             check_button.set_sensitive(True)
+            stop_button.set_sensitive(False)
             if watchdog_id[0] is not None:
                 GLib.source_remove(watchdog_id[0]); watchdog_id[0] = None
+            stop_timer()
             progress.set_fraction(1.0)
             if event.get("ok"):
                 if event.get("installed_at"):
@@ -236,59 +284,91 @@ def build_card():
                 files = event.get("files", []) + event.get("system_files", [])
                 packages = event.get("packages", []) + event.get("system_packages", [])
                 if event.get("update_available"):
-                    status.set_text(f"{event.get('release_name', 'Aurora')} ({event.get('version')}) beschikbaar: {len(files)} bestand(en), {len(packages)} pakket(en).")
+                    details = []
+                    if files: details.append(f"{len(files)} bestand(en)")
+                    if packages: details.append(f"{len(packages)} pakket(pen)")
+                    set_status(f"{event.get('release_name', 'Aurora')} ({event.get('version')}) is beschikbaar" + (f" — {', '.join(details)}." if details else "."), "warning")
+                    installed_info.set_text(f"Geïnstalleerd: {event.get('previous') or 'onbekend'} → Beschikbaar: {event.get('version')}")
                     install_button.set_sensitive(True)
                 elif event.get("downgrade"):
-                    status.set_text(f"De bron ({event.get('version')}) is ouder dan de geïnstalleerde versie ({event.get('previous')}); er wordt geen downgrade aangeboden.")
+                    set_status(f"De bron ({event.get('version')}) is ouder dan de geïnstalleerde versie ({event.get('previous')}); er wordt geen downgrade aangeboden.", "success")
                     install_button.set_sensitive(False)
                 else:
-                    status.set_text(f"Aurora {event.get('version', 'componenten')} is up-to-date — er is geen nieuwe Aurora-update.")
+                    set_status(f"Aurora {event.get('version', 'componenten')} is up-to-date — er is geen nieuwe Aurora-update.", "success")
                     install_button.set_sensitive(False)
-                progress.set_text("Controle voltooid")
+                progress.set_text("Voltooid")
                 notes.set_text(event.get("release_notes", ""))
             else:
-                progress.set_text("Controle mislukt")
-                status.set_text("Aurora-update mislukt: " + str(event.get("error", "onbekende fout")))
+                progress.set_text("Mislukt")
+                set_status("Aurora-update mislukt: " + str(event.get("error", "onbekende fout")), "error")
                 install_button.set_sensitive(False)
 
     def run(mode):
         if running[0]: return
-        running[0] = True; check_button.set_sensitive(False); stop_button.set_sensitive(True); install_button.set_sensitive(False); status.set_text("Controle wordt gestart…"); progress.set_fraction(0.0); progress.set_text("Repositorycontrole bezig…")
-        try: proc = subprocess.Popen([sys.executable, "-u", __file__, mode], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env={**os.environ, "PYTHONUNBUFFERED":"1"})
+        running[0] = True
+        check_button.set_sensitive(False)
+        stop_button.set_sensitive(mode == "--check")
+        install_button.set_sensitive(False)
+        set_status("Controle wordt gestart…")
+        progress.set_fraction(0.0); progress.set_text("Bezig…")
+        start_timer()
+        try:
+            proc = subprocess.Popen([sys.executable, "-u", __file__, mode], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env={**os.environ, "PYTHONUNBUFFERED": "1"})
         except OSError as exc:
             running[0] = False
-            check_button.set_sensitive(True); stop_button.set_sensitive(False); progress.set_fraction(0); progress.set_text("Updater kon niet starten"); status.set_text(f"Updater kon niet starten: {exc}"); return
+            check_button.set_sensitive(True); stop_button.set_sensitive(False); stop_timer()
+            progress.set_fraction(0); progress.set_text("Niet gestart")
+            set_status(f"Updater kon niet starten: {exc}", "error")
+            return
         process_ref[0] = proc
+        # Een controle mag maximaal 30 s stil staan; een installatie wacht ook op
+        # de polkit-bevestiging en krijgt daarom een ruime stilstandsgrens.
+        watchdog_seconds = 30 if mode == "--check" else 600
         def watchdog():
             if running[0] and proc.poll() is None:
                 proc.kill()
                 running[0] = False
                 check_button.set_sensitive(True); stop_button.set_sensitive(False)
                 install_button.set_sensitive(False)
-                handle({"event": "result", "ok": False, "error": "De Aurora-repository gaf binnen 30 seconden geen antwoord. Controleer internet, DNS of GitHub."})
+                message = ("De Aurora-repository gaf binnen 30 seconden geen antwoord. Controleer internet, DNS of GitHub." if mode == "--check"
+                           else "De installatie gaf te lang geen voortgang; mogelijk wachtte polkit op bevestiging. Probeer opnieuw.")
+                handle({"event": "result", "ok": False, "error": message})
                 return False
             return False
-        watchdog_id[0] = GLib.timeout_add_seconds(30, watchdog)
+        watchdog_id[0] = GLib.timeout_add_seconds(watchdog_seconds, watchdog)
         def read():
             for line in proc.stdout:
-                try: event = json.loads(line); GLib.idle_add(handle, event)
-                except ValueError: pass
+                try:
+                    event = json.loads(line)
+                    GLib.idle_add(handle, event)
+                except ValueError:
+                    pass
             rc = proc.wait()
             def done():
                 running[0] = False; process_ref[0] = None
-                if watchdog_id[0] is not None: GLib.source_remove(watchdog_id[0]); watchdog_id[0] = None
+                if watchdog_id[0] is not None:
+                    GLib.source_remove(watchdog_id[0]); watchdog_id[0] = None
+                stop_timer()
                 check_button.set_sensitive(True); stop_button.set_sensitive(False)
-                if mode == "--install" and rc == 0: install_button.set_sensitive(False)
-                check_button.set_sensitive(True)
+                if mode == "--install" and rc == 0:
+                    install_button.set_sensitive(False)
                 return False
             GLib.idle_add(done)
         threading.Thread(target=read, daemon=True).start()
+
     def stop_run(_button):
         proc = process_ref[0]
         if running[0] and proc is not None and proc.poll() is None:
-            proc.kill(); running[0] = False; stop_button.set_sensitive(False); check_button.set_sensitive(True); install_button.set_sensitive(False); progress.set_fraction(0); progress.set_text("Controle gestopt"); status.set_text("Controle gestopt. Je kunt opnieuw controleren.")
-    check_button.connect("clicked", lambda *_: run("--check")); install_button.connect("clicked", lambda *_: run("--install")); stop_button.connect("clicked", stop_run)
-    frame.set_child(outer); return frame
+            proc.kill(); running[0] = False; stop_button.set_sensitive(False); check_button.set_sensitive(True); install_button.set_sensitive(False)
+            stop_timer()
+            progress.set_fraction(0); progress.set_text("Gestopt")
+            set_status("Controle gestopt. Je kunt opnieuw controleren.")
+
+    check_button.connect("clicked", lambda *_: run("--check"))
+    install_button.connect("clicked", lambda *_: run("--install"))
+    stop_button.connect("clicked", stop_run)
+    frame.set_child(outer)
+    return frame
 
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument("--check", action="store_true"); parser.add_argument("--install", action="store_true"); args = parser.parse_args()

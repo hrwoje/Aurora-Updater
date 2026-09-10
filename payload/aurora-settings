@@ -1321,32 +1321,55 @@ class AuroraSettingsApp(Gtk.Application):
         box.append(self.create_page_header("Updates & Pakketbronnen", "Beheer systeemupdates, Btrfs herstelsnapshots en software-repositories", "software-update-available-symbolic"))
 
         # Updates Card
-        upd_card = self.create_card_group("Systeemupdates (XBPS & Flatpak)", "Controleer op updates met automatische Btrfs-herstelsnapshots")
-        self.lbl_upd_status = Gtk.Label(label="Druk op 'Zoeken naar updates' om de nieuwste pakketten te controleren.")
+        upd_card = self.create_card_group("Systeemupdates (XBPS & Flatpak)", "Controleer op updates en installeer ze met automatische Btrfs-herstelsnapshots")
+        self.lbl_upd_status = Gtk.Label(label="Druk op 'Zoeken naar updates' om de nieuwste pakketten te controleren.", wrap=True, selectable=True)
         self.lbl_upd_status.set_xalign(0.0)
         upd_card.get_last_child().append(self.lbl_upd_status)
 
-        btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        btn_check = Gtk.Button(label="🔍 Zoeken naar updates")
-        btn_apply = Gtk.Button(label="⚡ Nu bijwerken (met snapshot)")
+        def set_status(text, kind=None):
+            for css in ("success", "warning", "error"):
+                self.lbl_upd_status.remove_css_class(css)
+            if kind:
+                self.lbl_upd_status.add_css_class(kind)
+            self.lbl_upd_status.set_text(text)
+
+        btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        btn_row.set_margin_top(4)
+        btn_check = Gtk.Button(label="Zoeken naar updates")
+        btn_check.set_icon_name("view-refresh-symbolic")
+        btn_apply = Gtk.Button(label="Nu bijwerken (met snapshot)")
+        btn_apply.set_icon_name("software-update-available-symbolic")
         btn_apply.add_css_class("suggested-action")
         btn_apply.set_sensitive(False)
-
         btn_flatpak = Gtk.Button(label="Flatpak-apps bijwerken")
-        btn_row.append(btn_check)
-        btn_row.append(btn_apply)
-        btn_row.append(btn_flatpak)
+        btn_flatpak.set_icon_name("package-x-generic-symbolic")
+        btn_row.append(btn_check); btn_row.append(btn_apply); btn_row.append(btn_flatpak)
         upd_card.get_last_child().append(btn_row)
 
-        self.upd_spinner = Gtk.Spinner()
-        upd_card.get_last_child().append(self.upd_spinner)
+        flat_remotes = run_cmd("flatpak", "remotes")
+        has_flatpak = bool(flat_remotes and flat_remotes.stdout and flat_remotes.stdout.strip())
+        btn_flatpak.set_sensitive(has_flatpak)
+        if not has_flatpak:
+            hint = Gtk.Label(label="Flatpak heeft nog geen remote (bijv. Flathub); voeg die toe onder 'Pakketbronnen' om Flatpak-apps bij te werken.", wrap=True, xalign=0.0)
+            hint.add_css_class("dim-label")
+            upd_card.get_last_child().append(hint)
 
-        # Logboek weergave
+        busy_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.upd_spinner = Gtk.Spinner()
+        elapsed_lbl = Gtk.Label(label="", xalign=0.0)
+        elapsed_lbl.add_css_class("monospace")
+        elapsed_lbl.add_css_class("dim-label")
+        busy_row.append(self.upd_spinner)
+        busy_row.append(elapsed_lbl)
+        upd_card.get_last_child().append(busy_row)
+
+        # Logboek met automatisch doorscrollen en begrensde omvang
         self.log_view_upd = Gtk.TextView()
         self.log_view_upd.set_editable(False)
         self.log_view_upd.set_monospace(True)
+        self.log_view_upd.set_wrap_mode(Gtk.WrapMode.WORD_CHAR)
         log_scroll = Gtk.ScrolledWindow()
-        log_scroll.set_size_request(-1, 140)
+        log_scroll.set_size_request(-1, 150)
         log_scroll.set_child(self.log_view_upd)
         upd_card.get_last_child().append(log_scroll)
         box.append(upd_card)
@@ -1354,63 +1377,135 @@ class AuroraSettingsApp(Gtk.Application):
         def append_upd_log(txt):
             buf = self.log_view_upd.get_buffer()
             buf.insert(buf.get_end_iter(), txt + "\n")
+            if buf.get_line_count() > 500:
+                buf.delete(buf.get_start_iter(), buf.get_iter_at_line(buf.get_line_count() - 500))
+            self.log_view_upd.scroll_to_iter(buf.get_end_iter(), 0.0, False, 0.0, 0.0)
+
+        timer_state = {"id": None, "start": 0.0}
+        def start_timer():
+            timer_state["start"] = time.monotonic()
+            elapsed_lbl.set_text("0 s")
+            def tick():
+                elapsed_lbl.set_text(f"{int(time.monotonic() - timer_state['start'])} s")
+                return True
+            timer_state["id"] = GLib.timeout_add(1000, tick)
+        def stop_timer():
+            if timer_state["id"] is not None:
+                GLib.source_remove(timer_state["id"])
+                timer_state["id"] = None
+            elapsed_lbl.set_text("")
 
         def on_check_clicked(b):
-            self.upd_spinner.start()
-            self.lbl_upd_status.set_text("Zoeken naar beschikbare updates...")
             btn_check.set_sensitive(False)
+            btn_apply.set_sensitive(False)
+            self.upd_spinner.start()
+            set_status("Zoeken naar beschikbare updates…")
+            append_upd_log(f"--- Controle gestart om {datetime.now().strftime('%H:%M:%S')} ---")
 
             def worker():
-                run_cmd("xbps-install", "-S")
-                upds = check_xbps_updates()
+                sync = run_cmd("xbps-install", "-S")
+                if sync and sync.returncode != 0:
+                    GLib.idle_add(lambda: append_upd_log("Let op: repositorymetadata-synchronisatie faalde (deels) als gebruiker; resultaten komen uit de cache."))
+                xbps_upds = check_xbps_updates()
+                flat_res = run_cmd("flatpak", "remote-ls", "--updates")
+                flat_upds = [l for l in (flat_res.stdout or "").splitlines() if l.strip()] if flat_res and flat_res.returncode == 0 else []
+
                 def ui_done():
                     self.upd_spinner.stop()
                     btn_check.set_sensitive(True)
-                    if upds:
-                        self.lbl_upd_status.set_text(f"Er zijn {len(upds)} update(s) beschikbaar:")
-                        btn_apply.set_sensitive(True)
-                        for u in upds:
-                            append_upd_log(f"• {u}")
+                    for u in xbps_upds:
+                        append_upd_log(f"• XBPS: {u}")
+                    for u in flat_upds[:40]:
+                        append_upd_log(f"• Flatpak: {u}")
+                    btn_flatpak.set_label(f"Flatpak-apps bijwerken ({len(flat_upds)})" if flat_upds else "Flatpak-apps bijwerken")
+                    if xbps_upds or flat_upds:
+                        set_status(f"{len(xbps_upds)} XBPS-update(s) en {len(flat_upds)} Flatpak-update(s) beschikbaar.", "warning")
+                        btn_apply.set_sensitive(bool(xbps_upds))
                     else:
-                        self.lbl_upd_status.set_text("Je systeem is helemaal up-to-date! Geen updates vereist.")
-                        btn_apply.set_sensitive(False)
+                        set_status("Je systeem is helemaal up-to-date — geen updates vereist.", "success")
                 GLib.idle_add(ui_done)
 
             threading.Thread(target=worker, daemon=True).start()
 
         def on_apply_clicked(b):
             btn_apply.set_sensitive(False)
+            btn_check.set_sensitive(False)
             self.upd_spinner.start()
-            self.lbl_upd_status.set_text("Updates worden geïnstalleerd met Btrfs herstelsnapshot...")
-            append_upd_log("\n--- Starten van veilige systeemupdate ---")
+            start_timer()
+            set_status("Systeemupdates worden geïnstalleerd met Btrfs herstelsnapshot…")
+            append_upd_log(f"\n--- {datetime.now().strftime('%H:%M:%S')} Starten van veilige systeemupdate (XBPS + snapshot) ---")
 
             def worker():
                 res = run_admin_cmd("update-apply", timeout=600)
-                out = res.stdout if res and res.stdout else "Geen uitvoer."
+                out = res.stdout if res and res.stdout else ""
+                err = res.stderr if res and res.stderr else ""
+                ok = bool(res and res.returncode == 0)
+                snap_line = ""
+                snap = run_cmd("snapper", "-c", "root", "list")
+                if snap and snap.stdout:
+                    lines = [l for l in snap.stdout.splitlines() if l.strip()]
+                    snap_line = f"\nHerstelsnapshots op het rootvolume: {max(0, len(lines) - 2)}."
+
                 def ui_done():
                     self.upd_spinner.stop()
-                    self.lbl_upd_status.set_text("Updateproces voltooid!")
-                    append_upd_log(out)
+                    stop_timer()
+                    btn_check.set_sensitive(True)
+                    btn_apply.set_sensitive(False)
+                    append_upd_log(out or "Geen uitvoer.")
+                    if err:
+                        append_upd_log("Fout: " + err)
+                    if ok:
+                        set_status("Systeemupdate voltooid — het systeem is bijgewerkt." + snap_line, "success")
+                    else:
+                        set_status("De systeemupdate is mislukt of geannuleerd. Bekijk het logboek hieronder.", "error")
                 GLib.idle_add(ui_done)
 
             threading.Thread(target=worker, daemon=True).start()
 
         def on_flatpak_clicked(b):
             btn_flatpak.set_sensitive(False)
-            append_upd_log("\n--- Flatpak updates controleren ---")
+            self.upd_spinner.start()
+            set_status("Flatpak-apps bijwerken…")
+            append_upd_log(f"\n--- {datetime.now().strftime('%H:%M:%S')} Flatpak-update ---")
+
             def worker():
-                res = run_cmd("flatpak", "update", "-y")
+                res = run_cmd("flatpak", "update", "-y", timeout=600)
                 out = res.stdout if res and res.stdout else "Flatpak bijgewerkt."
-                GLib.idle_add(lambda: (append_upd_log(out), btn_flatpak.set_sensitive(True)))
+                err = res.stderr if res and res.stderr else ""
+                ok = bool(res and res.returncode == 0)
+
+                def ui_done():
+                    self.upd_spinner.stop()
+                    btn_flatpak.set_sensitive(True)
+                    append_upd_log(out)
+                    if err:
+                        append_upd_log("Fout: " + err)
+                    if ok:
+                        set_status("Flatpak-apps bijgewerkt.", "success")
+                    else:
+                        set_status("Flatpak-update mislukt of geannuleerd.", "error")
+                GLib.idle_add(ui_done)
+
             threading.Thread(target=worker, daemon=True).start()
 
         btn_check.connect("clicked", on_check_clicked)
         btn_apply.connect("clicked", on_apply_clicked)
         btn_flatpak.connect("clicked", on_flatpak_clicked)
 
+        # Automatische controle de eerste keer dat deze pagina wordt geopend.
+        auto_done = [False]
+        def on_page_shown(*_):
+            if auto_done[0]:
+                return
+            if self.stack.get_visible_child_name() != "updates":
+                return
+            auto_done[0] = True
+            GLib.idle_add(lambda: (on_check_clicked(btn_check), False)[-1])
+        self.stack.connect("notify::visible-child", on_page_shown)
+
         # ── Repository Beheer Card ───────────────────────────────────────────
         repo_card = self.create_card_group("Pakketbronnen (Repositories)", "Schakel officiële Void Linux componenten en Flatpak-bronnen in")
-        repo_grid = Gtk.Grid(column_spacing=16, row_spacing=10)
+        repo_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
 
         repos = [
             ("nonfree", "Void Linux Non-Free (Proprietary drivers, Wi-Fi firmware & codecs)", "void-repo-nonfree"),
@@ -1434,20 +1529,35 @@ class AuroraSettingsApp(Gtk.Application):
             chk = run_cmd("xbps-query", "-s", r_pkg)
             return bool(chk and chk.returncode == 0)
 
+        def set_badge(badge, active):
+            for css in ("success", "dim-label"):
+                badge.remove_css_class(css)
+            if active:
+                badge.add_css_class("success")
+                badge.set_text("Ingeschakeld")
+            else:
+                badge.add_css_class("dim-label")
+                badge.set_text("Uitgeschakeld")
+
         for idx, (r_name, r_desc, r_pkg) in enumerate(repos):
             is_active = repo_is_enabled(r_name, r_pkg)
             sw = aurora_switch()
             sw.set_active(is_active)
+            badge = Gtk.Label(label="Ingeschakeld" if is_active else "Uitgeschakeld")
+            set_badge(badge, is_active)
 
-            def make_repo_toggle(repo_key=r_name, pkg=r_pkg):
+            def make_repo_toggle(repo_key=r_name, pkg=r_pkg, switch=sw, badge=badge):
                 def on_toggle(s, state):
+                    switch.set_sensitive(False)
                     action = "repo-enable" if state else "repo-disable"
-                    append_upd_log(f"Repository {repo_key} wijzigen...")
+                    append_upd_log(f"Repository {repo_key} wijzigen…")
                     def worker():
                         run_admin_cmd(action, repo_key)
                         def ui_done():
                             actual = repo_is_enabled(repo_key, pkg)
                             s.set_active(actual)
+                            switch.set_sensitive(True)
+                            set_badge(badge, actual)
                             append_upd_log(f"Repository {repo_key} {'ingeschakeld' if actual else 'uitgeschakeld'}.")
                         GLib.idle_add(ui_done)
                     threading.Thread(target=worker, daemon=True).start()
@@ -1456,34 +1566,50 @@ class AuroraSettingsApp(Gtk.Application):
             sw.connect("state-set", make_repo_toggle(r_name))
             lbl = Gtk.Label(label=f"<b>{esc(r_name.capitalize())}</b>\n<span size='small'>{esc(r_desc)}</span>", use_markup=True, xalign=0.0)
             lbl.set_hexpand(True)
-            repo_grid.attach(lbl, 0, idx, 1, 1)
-            repo_grid.attach(sw, 1, idx, 1, 1)
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            row.append(lbl)
+            row.append(badge)
+            row.append(sw)
+            repo_box.append(row)
 
         # Flatpak Beta Remote
-        idx = len(repos)
         flatpak_remotes_res = run_cmd("flatpak", "remotes")
         has_beta = "flathub-beta" in (flatpak_remotes_res.stdout if flatpak_remotes_res else "")
         sw_beta = aurora_switch()
         sw_beta.set_active(has_beta)
+        badge_beta = Gtk.Label(label="Ingeschakeld" if has_beta else "Uitgeschakeld")
+        set_badge(badge_beta, has_beta)
 
         def on_beta_toggle(s, state):
+            sw_beta.set_sensitive(False)
             def worker():
                 if state:
                     run_cmd("flatpak", "remote-add", "--if-not-exists", "flathub-beta", "https://flathub.org/beta-repo/flathub-beta.flatpakrepo")
-                    msg = "Flathub Beta repository ingeschakeld!"
+                    msg = "Flathub Beta repository ingeschakeld."
                 else:
                     run_cmd("flatpak", "remote-delete", "--force", "flathub-beta")
                     msg = "Flathub Beta repository uitgeschakeld."
-                GLib.idle_add(lambda: append_upd_log(msg))
+                def ui_done():
+                    sw_beta.set_sensitive(True)
+                    set_badge(badge_beta, bool(state))
+                    append_upd_log(msg)
+                GLib.idle_add(ui_done)
             threading.Thread(target=worker, daemon=True).start()
 
         sw_beta.connect("state-set", on_beta_toggle)
         beta_lbl = Gtk.Label(label="<b>Flathub Beta</b>\n<span size='small'>Schakel toegang tot beta- en pre-release Flatpak applicaties in</span>", use_markup=True, xalign=0.0)
         beta_lbl.set_hexpand(True)
-        repo_grid.attach(beta_lbl, 0, idx, 1, 1)
-        repo_grid.attach(sw_beta, 1, idx, 1, 1)
+        beta_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        beta_row.append(beta_lbl)
+        beta_row.append(badge_beta)
+        beta_row.append(sw_beta)
+        repo_box.append(beta_row)
 
-        repo_card.get_last_child().append(repo_grid)
+        repo_note = Gtk.Label(label="Repositories die via een conf-bestand actief zijn (zoals de Aurora-systeemconfs) worden automatisch herkend.", wrap=True, xalign=0.0)
+        repo_note.add_css_class("dim-label")
+        repo_box.append(repo_note)
+
+        repo_card.get_last_child().append(repo_box)
         box.append(repo_card)
 
         scrolled.set_child(box)

@@ -123,6 +123,8 @@ def build_card():
     check_button, install_button = Gtk.Button(label="Controleren"), Gtk.Button(label="Aurora bijwerken")
     install_button.set_sensitive(False); buttons.append(check_button); buttons.append(install_button); outer.append(buttons)
     running = [False]
+    process_ref = [None]
+    watchdog_id = [None]
 
     def handle(event):
         if event.get("event") == "status": status.set_text(event.get("message", "Bezig…"))
@@ -130,6 +132,8 @@ def build_card():
             progress.set_fraction(max(0.0, min(1.0, float(event.get("fraction", 0)))))
             progress.set_text(event.get("message", "Bezig…"))
         elif event.get("event") == "result":
+            if watchdog_id[0] is not None:
+                GLib.source_remove(watchdog_id[0]); watchdog_id[0] = None
             progress.set_fraction(1.0)
             if event.get("ok"):
                 if event.get("installed_at"):
@@ -155,19 +159,23 @@ def build_card():
         except OSError as exc:
             running[0] = False
             check_button.set_sensitive(True); progress.set_fraction(0); progress.set_text("Updater kon niet starten"); status.set_text(f"Updater kon niet starten: {exc}"); return
+        process_ref[0] = proc
+        def watchdog():
+            if running[0] and proc.poll() is None:
+                proc.kill()
+                handle({"event": "result", "ok": False, "error": "De Aurora-repository gaf binnen 30 seconden geen antwoord. Controleer internet, DNS of GitHub."})
+                return False
+            return False
+        watchdog_id[0] = GLib.timeout_add_seconds(30, watchdog)
         def read():
             for line in proc.stdout:
                 try: event = json.loads(line); GLib.idle_add(handle, event)
                 except ValueError: pass
-            try:
-                rc = proc.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait()
-                GLib.idle_add(handle, {"event": "result", "ok": False, "error": "De Aurora-repository antwoordde niet binnen 30 seconden. Controleer internet, DNS of GitHub."})
-                rc = 124
+            rc = proc.wait()
             def done():
-                running[0] = False; check_button.set_sensitive(True)
+                running[0] = False; process_ref[0] = None
+                if watchdog_id[0] is not None: GLib.source_remove(watchdog_id[0]); watchdog_id[0] = None
+                check_button.set_sensitive(True)
                 if mode == "--install" and rc == 0: install_button.set_sensitive(False)
                 return False
             GLib.idle_add(done)

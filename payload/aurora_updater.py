@@ -111,7 +111,7 @@ def build_card():
     logo.set_pixel_size(72); logo.set_halign(Gtk.Align.CENTER); logo.set_tooltip_text("Aurora OS"); outer.append(logo)
     title = Gtk.Label(label="<b>Aurora Updates</b>", use_markup=True, xalign=0.5); title.add_css_class("title-3"); outer.append(title)
     intro = Gtk.Label(label="Werk Aurora-componenten bij via de beheerde GitHub-repository. Void- en Flatpak-updates blijven in hun eigen beheerpagina.", wrap=True, xalign=0.0); outer.append(intro)
-    build_info = Gtk.Label(label="Updater-build 2026.09.10.10 · echte repositorystatus · watchdog 30 s", xalign=0.0); build_info.add_css_class("dim-label"); outer.append(build_info)
+    build_info = Gtk.Label(label="Updater-build 2026.09.10.12 · echte repositorystatus · watchdog 30 s", xalign=0.0); build_info.add_css_class("dim-label"); outer.append(build_info)
     status = Gtk.Label(label="Nog niet gecontroleerd.", wrap=True, xalign=0.0); outer.append(status)
     previous = installed()
     previous_text = "Geïnstalleerde versie: nog niet vastgesteld"
@@ -122,7 +122,8 @@ def build_card():
     notes = Gtk.Label(label="", wrap=True, xalign=0.0); notes.add_css_class("dim-label"); outer.append(notes)
     buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     check_button, install_button = Gtk.Button(label="Controleren"), Gtk.Button(label="Aurora bijwerken")
-    install_button.set_sensitive(False); buttons.append(check_button); buttons.append(install_button); outer.append(buttons)
+    stop_button = Gtk.Button(label="Controle stoppen"); stop_button.set_sensitive(False)
+    install_button.set_sensitive(False); buttons.append(check_button); buttons.append(install_button); buttons.append(stop_button); outer.append(buttons)
     running = [False]
     process_ref = [None]
     watchdog_id = [None]
@@ -158,17 +159,17 @@ def build_card():
 
     def run(mode):
         if running[0]: return
-        running[0] = True; check_button.set_sensitive(False); install_button.set_sensitive(False); status.set_text("Controle wordt gestart…"); progress.set_fraction(0.0); progress.set_text("Repositorycontrole bezig…")
+        running[0] = True; check_button.set_sensitive(False); stop_button.set_sensitive(True); install_button.set_sensitive(False); status.set_text("Controle wordt gestart…"); progress.set_fraction(0.0); progress.set_text("Repositorycontrole bezig…")
         try: proc = subprocess.Popen([sys.executable, "-u", __file__, mode], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env={**os.environ, "PYTHONUNBUFFERED":"1"})
         except OSError as exc:
             running[0] = False
-            check_button.set_sensitive(True); progress.set_fraction(0); progress.set_text("Updater kon niet starten"); status.set_text(f"Updater kon niet starten: {exc}"); return
+            check_button.set_sensitive(True); stop_button.set_sensitive(False); progress.set_fraction(0); progress.set_text("Updater kon niet starten"); status.set_text(f"Updater kon niet starten: {exc}"); return
         process_ref[0] = proc
         def watchdog():
             if running[0] and proc.poll() is None:
                 proc.kill()
                 running[0] = False
-                check_button.set_sensitive(True)
+                check_button.set_sensitive(True); stop_button.set_sensitive(False)
                 install_button.set_sensitive(False)
                 handle({"event": "result", "ok": False, "error": "De Aurora-repository gaf binnen 30 seconden geen antwoord. Controleer internet, DNS of GitHub."})
                 return False
@@ -182,13 +183,17 @@ def build_card():
             def done():
                 running[0] = False; process_ref[0] = None
                 if watchdog_id[0] is not None: GLib.source_remove(watchdog_id[0]); watchdog_id[0] = None
-                check_button.set_sensitive(True)
+                check_button.set_sensitive(True); stop_button.set_sensitive(False)
                 if mode == "--install" and rc == 0: install_button.set_sensitive(False)
                 check_button.set_sensitive(True)
                 return False
             GLib.idle_add(done)
         threading.Thread(target=read, daemon=True).start()
-    check_button.connect("clicked", lambda *_: run("--check")); install_button.connect("clicked", lambda *_: run("--install"))
+    def stop_run(_button):
+        proc = process_ref[0]
+        if running[0] and proc is not None and proc.poll() is None:
+            proc.kill(); running[0] = False; stop_button.set_sensitive(False); check_button.set_sensitive(True); install_button.set_sensitive(False); progress.set_fraction(0); progress.set_text("Controle gestopt"); status.set_text("Controle gestopt. Je kunt opnieuw controleren.")
+    check_button.connect("clicked", lambda *_: run("--check")); install_button.connect("clicked", lambda *_: run("--install")); stop_button.connect("clicked", stop_run)
     frame.set_child(outer); return frame
 
 def main():

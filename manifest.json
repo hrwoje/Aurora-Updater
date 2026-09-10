@@ -2,7 +2,7 @@
   "schema": 1,
   "version": "2026.09.10.13",
   "channel": "stable",
-  "release_notes": "Added qrencode to the explicit Aurora dependency set; qrencode 4.1.1 is installed and verified on this system.",
+  "release_notes": "Added an explicit stop control and runtime build marker. Stalled checks can always be stopped and retried.",
   "required_packages": [
     "wl-clipboard",
     "ImageMagick",
@@ -16,7 +16,7 @@
     {
       "source": "payload/aurora_updater.py",
       "target": "~/.local/bin/aurora_updater.py",
-      "sha256": "185d7ceea817981901e56333437322ce622aba4388ce2e9c729901bc30e1321e",
+      "sha256": "91c2b9721543d1a8b1273393976b2a06085a081954b3604386f9c84cfe1ef547",
       "mode": "755"
     },
     {
@@ -75,5 +75,5 @@
     "file": "LICENSE",
     "copyright": "Copyright (c) 2026 Hrwoje Dabo, media4now.nl"
   },
-  "release_name": "Aurora QR Encode Dependency"
+  "release_name": "Aurora Updates Stop & Retry"
 }

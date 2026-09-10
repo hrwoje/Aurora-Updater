@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": "2026.09.10.6",
+  "version": "2026.09.10.7",
   "channel": "stable",
-  "release_notes": "The updater now loads the installed release immediately and finishes the progress bar after every check.",
+  "release_notes": "Aurora Updates now gives immediate click feedback, pulses while checking the repository and finishes with a clear status.",
   "required_packages": [
     "wl-clipboard",
     "ImageMagick",
@@ -15,7 +15,7 @@
     {
       "source": "payload/aurora_updater.py",
       "target": "~/.local/bin/aurora_updater.py",
-      "sha256": "3dee891f56cf3ac1f20a992349430436afe7e4536aa755345ddc09afcc65ed2a",
+      "sha256": "3b357a5dfb33c28474ed25f0d3b075c153471eec86c6094f30f6a24e3793e8fb",
       "mode": "755"
     },
     {
@@ -74,5 +74,5 @@
     "file": "LICENSE",
     "copyright": "Copyright (c) 2026 Hrwoje Dabo, media4now.nl"
   },
-  "release_name": "Aurora Updates Status & Version Display"
+  "release_name": "Aurora Updates Live Progress"
 }

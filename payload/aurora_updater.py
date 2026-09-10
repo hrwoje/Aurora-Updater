@@ -94,7 +94,16 @@ def build_card():
     for side in (16,):
         outer.set_margin_start(side); outer.set_margin_end(side)
     outer.set_margin_top(14); outer.set_margin_bottom(14)
-    logo = Gtk.Image.new_from_icon_name("aurora"); logo.set_pixel_size(64); logo.set_halign(Gtk.Align.CENTER); outer.append(logo)
+    logo_path = "/usr/share/aurora/logo.png"
+    if os.path.exists(logo_path):
+        try:
+            pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(logo_path, 72, 72, True)
+            logo = Gtk.Image.new_from_pixbuf(pix)
+        except Exception:
+            logo = Gtk.Image.new_from_icon_name("aurora")
+    else:
+        logo = Gtk.Image.new_from_icon_name("aurora")
+    logo.set_pixel_size(72); logo.set_halign(Gtk.Align.CENTER); logo.set_tooltip_text("Aurora OS"); outer.append(logo)
     title = Gtk.Label(label="<b>Aurora Updates</b>", use_markup=True, xalign=0.5); title.add_css_class("title-3"); outer.append(title)
     intro = Gtk.Label(label="Werk Aurora-componenten bij via de beheerde GitHub-repository. Void- en Flatpak-updates blijven in hun eigen beheerpagina.", wrap=True, xalign=0.0); outer.append(intro)
     status = Gtk.Label(label="Nog niet gecontroleerd.", wrap=True, xalign=0.0); outer.append(status)

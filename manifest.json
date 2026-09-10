@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": "2026.09.10.11",
+  "version": "2026.09.10.12",
   "channel": "stable",
-  "release_notes": "Added a visible updater build marker so the active runtime can be verified in Aurora Settings.",
+  "release_notes": "Checks now explicitly report up-to-date, re-enable the check button after every result and keep installation disabled when no update exists.",
   "required_packages": [
     "wl-clipboard",
     "ImageMagick",
@@ -15,7 +15,7 @@
     {
       "source": "payload/aurora_updater.py",
       "target": "~/.local/bin/aurora_updater.py",
-      "sha256": "798082af8c26c676b208328ac20639ac577c6bd4eeec944800e6bb9a07f3e67f",
+      "sha256": "185d7ceea817981901e56333437322ce622aba4388ce2e9c729901bc30e1321e",
       "mode": "755"
     },
     {
@@ -74,5 +74,5 @@
     "file": "LICENSE",
     "copyright": "Copyright (c) 2026 Hrwoje Dabo, media4now.nl"
   },
-  "release_name": "Aurora Updates Runtime Diagnostics"
+  "release_name": "Aurora Updates Retry & Up-to-date Status"
 }

@@ -133,6 +133,8 @@ def build_card():
             progress.set_fraction(max(0.0, min(1.0, float(event.get("fraction", 0)))))
             progress.set_text(event.get("message", "Bezig…"))
         elif event.get("event") == "result":
+            running[0] = False
+            check_button.set_sensitive(True)
             if watchdog_id[0] is not None:
                 GLib.source_remove(watchdog_id[0]); watchdog_id[0] = None
             progress.set_fraction(1.0)
@@ -145,7 +147,8 @@ def build_card():
                     status.set_text(f"{event.get('release_name', 'Aurora')} ({event.get('version')}) beschikbaar: {len(files)} bestand(en), {len(packages)} pakket(en).")
                     install_button.set_sensitive(True)
                 else:
-                    status.set_text(f"Aurora {event.get('version', 'componenten')} is actueel.")
+                    status.set_text(f"Aurora {event.get('version', 'componenten')} is up-to-date — er is geen nieuwe Aurora-update.")
+                    install_button.set_sensitive(False)
                 progress.set_text("Controle voltooid")
                 notes.set_text(event.get("release_notes", ""))
             else:
@@ -164,6 +167,9 @@ def build_card():
         def watchdog():
             if running[0] and proc.poll() is None:
                 proc.kill()
+                running[0] = False
+                check_button.set_sensitive(True)
+                install_button.set_sensitive(False)
                 handle({"event": "result", "ok": False, "error": "De Aurora-repository gaf binnen 30 seconden geen antwoord. Controleer internet, DNS of GitHub."})
                 return False
             return False
@@ -178,6 +184,7 @@ def build_card():
                 if watchdog_id[0] is not None: GLib.source_remove(watchdog_id[0]); watchdog_id[0] = None
                 check_button.set_sensitive(True)
                 if mode == "--install" and rc == 0: install_button.set_sensitive(False)
+                check_button.set_sensitive(True)
                 return False
             GLib.idle_add(done)
         threading.Thread(target=read, daemon=True).start()

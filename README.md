@@ -26,3 +26,12 @@ the license travels with the Aurora installation. Void, Niri, Noctalia, GTK,
 Flatpak and all other third-party components remain under their own licenses.
 The Aurora name, logo and branding require separate permission for any use that
 suggests official endorsement.
+
+## Release versions and repeat-safe installation
+
+Every release must use a unique `version` and a human-readable `release_name` in
+`manifest.json`. Aurora Settings shows both values and the installation time.
+The updater stores the active release and the last 20 installed releases in
+`~/.local/state/aurora-updater/installed.json` and `history.json`. If the same
+version and verified payloads are already installed, a second click is reported
+as already installed and no files, packages, or system actions are run again.

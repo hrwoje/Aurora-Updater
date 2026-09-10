@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": "2026.09.10.1",
+  "version": "2026.09.10.2",
   "channel": "stable",
-  "release_notes": "Aurora component updater, refreshed Settings, AI manager, keyboard actions and Aurora branding.",
+  "release_notes": "Aurora component updater now carries reviewed Void XBPS repository policy, explicit system package checks and certificate refresh actions. XBPS trust keys and generated certificate bundles remain managed by Void.",
   "required_packages": [
     "wl-clipboard",
     "ImageMagick",
@@ -15,7 +15,7 @@
     {
       "source": "payload/aurora_updater.py",
       "target": "~/.local/bin/aurora_updater.py",
-      "sha256": "f5c006dcbcde04f84ee26408850d9142eb414d7f18c42e092f65f76054a39123",
+      "sha256": "803e0efbca6c03cd5ab3cfd25189fca1b1bb0bcf2d776c3bca5eb1b66c971112",
       "mode": "755"
     },
     {
@@ -40,6 +40,25 @@
       "source": "payload/aurora.svg",
       "target": "~/.local/share/icons/hicolor/scalable/apps/aurora.svg",
       "sha256": "1ad71714b4ba28321e42bcaddd7bbb3e72b2e5f91e70e7b6d737b8765ea16a95",
+      "mode": "644"
+    }
+  ],
+  "system_packages": [
+    "ca-certificates",
+    "xbps",
+    "xbps-triggers",
+    "niri",
+    "noctalia"
+  ],
+  "system_policy": {
+    "refresh_xbps_metadata": true,
+    "refresh_certificates": true
+  },
+  "system_files": [
+    {
+      "source": "payload/20-aurora-void-official.conf",
+      "target": "/etc/xbps.d/20-aurora-void-official.conf",
+      "sha256": "244628baa4c7e33bc455cd23b4a164782f19dab87ad0feefa9038490c3fcefa2",
       "mode": "644"
     }
   ]

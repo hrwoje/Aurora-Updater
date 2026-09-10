@@ -599,15 +599,6 @@ class AuroraSettingsApp(Gtk.Application):
     def create_page_header(self, title, subtitle, icon_name=None):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         box.set_margin_bottom(12)
-        brand = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        brand.set_halign(Gtk.Align.CENTER)
-        brand_logo = aurora_logo_image(58)
-        brand.append(brand_logo)
-        brand_name = Gtk.Label(label="<b>Aurora</b>", use_markup=True)
-        brand_name.add_css_class("title-4")
-        brand_name.set_halign(Gtk.Align.CENTER)
-        brand.append(brand_name)
-        box.append(brand)
         heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
         heading.set_hexpand(True)
         if icon_name:

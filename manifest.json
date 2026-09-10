@@ -21,7 +21,7 @@
     {
       "source": "payload/aurora-settings",
       "target": "~/.local/bin/aurora-settings",
-      "sha256": "f82c6d26b60bca91b034a8eeb017fb4819f2f736541ea9a07eece666a42d1705",
+      "sha256": "5ca83fec87ff52c8505f26421ed60168c5491ca8c3bacb5f187c5d670ee0280b",
       "mode": "755"
     },
     {

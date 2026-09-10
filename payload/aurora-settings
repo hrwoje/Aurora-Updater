@@ -46,7 +46,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Gtk, Gdk, GdkPixbuf, GLib
+from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Pango
 
 COLORS = (
     "adwaita", "black", "blue", "bluegrey", "breeze", "brown", "carmine",
@@ -463,13 +463,20 @@ class AuroraSettingsApp(Gtk.Application):
         win = Gtk.ApplicationWindow(application=self)
         install_aurora_widget_style()
         win.set_title("Aurora-instellingen")
-        win.set_default_size(1040, 760)
+        win.set_default_size(1120, 800)
+        win.set_size_request(760, 560)
 
         # HeaderBar
         header = Gtk.HeaderBar()
+        header_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        header_content.set_halign(Gtk.Align.CENTER)
+        header_logo = Gtk.Image.new_from_icon_name("aurora")
+        header_logo.set_pixel_size(30)
+        header_content.append(header_logo)
         header_title = Gtk.Label(label="Aurora-instellingen")
         header_title.add_css_class("heading")
-        header.set_title_widget(header_title)
+        header_content.append(header_title)
+        header.set_title_widget(header_content)
         win.set_titlebar(header)
 
         main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
@@ -482,7 +489,8 @@ class AuroraSettingsApp(Gtk.Application):
 
         sidebar = Gtk.StackSidebar()
         sidebar.set_stack(self.stack)
-        sidebar.set_size_request(240, -1)
+        sidebar.set_size_request(210, -1)
+        sidebar.set_vexpand(True)
         main_box.append(sidebar)
 
         sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
@@ -510,6 +518,7 @@ class AuroraSettingsApp(Gtk.Application):
         self.stack.add_titled(aurora_shortcuts.build_page(self), "shortcuts", "Sneltoetsen")
         self.stack.add_titled(self.build_hardware_page(), "hardware", "Kernel & Drivers")
         self.stack.add_titled(self.build_users_page(), "users", "Gebruikers")
+        self._make_responsive(self.stack)
 
         if self.initial_page and self.stack.get_child_by_name(self.initial_page):
             self.stack.set_visible_child_name(self.initial_page)
@@ -528,6 +537,21 @@ class AuroraSettingsApp(Gtk.Application):
         win.present()
 
     # ── Hulpfuncties voor Cards & UI ───────────────────────────────────────
+    def _make_responsive(self, widget):
+        """Give every settings page predictable wrapping and flexible widths."""
+        if isinstance(widget, Gtk.Label):
+            widget.set_wrap(True)
+            widget.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+            widget.set_max_width_chars(105)
+            widget.set_hexpand(True)
+            widget.set_halign(Gtk.Align.FILL)
+        if isinstance(widget, Gtk.Box):
+            widget.set_hexpand(True)
+        child = widget.get_first_child()
+        while child is not None:
+            self._make_responsive(child)
+            child = child.get_next_sibling()
+
     def create_card_group(self, title, subtitle=None):
         frame = Gtk.Frame()
         frame.add_css_class("card")
@@ -560,15 +584,26 @@ class AuroraSettingsApp(Gtk.Application):
         return frame
 
     def create_page_header(self, title, subtitle, icon_name=None):
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         box.set_margin_bottom(12)
-
+        brand = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        brand.set_halign(Gtk.Align.CENTER)
+        brand_logo = Gtk.Image.new_from_icon_name("aurora")
+        brand_logo.set_pixel_size(58)
+        brand.append(brand_logo)
+        brand_name = Gtk.Label(label="<b>Aurora</b>", use_markup=True)
+        brand_name.add_css_class("title-4")
+        brand_name.set_halign(Gtk.Align.CENTER)
+        brand.append(brand_name)
+        box.append(brand)
+        heading = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        heading.set_hexpand(True)
         if icon_name:
             icon = Gtk.Image.new_from_icon_name(icon_name)
             icon.set_pixel_size(36)
-            box.append(icon)
-
+            heading.append(icon)
         t_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        t_box.set_hexpand(True)
         t_lbl = Gtk.Label(label=f"<b>{esc(title)}</b>")
         t_lbl.set_use_markup(True)
         t_lbl.set_xalign(0.0)
@@ -580,7 +615,8 @@ class AuroraSettingsApp(Gtk.Application):
         s_lbl.set_xalign(0.0)
         t_box.append(s_lbl)
 
-        box.append(t_box)
+        heading.append(t_box)
+        box.append(heading)
         return box
 
     def get_user_avatar_image(self, username, size=48):

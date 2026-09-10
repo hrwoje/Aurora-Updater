@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": "2026.09.10.5",
+  "version": "2026.09.10.6",
   "channel": "stable",
-  "release_notes": "Added named Aurora releases, persistent version history and duplicate-install protection in Aurora Updates.",
+  "release_notes": "The updater now loads the installed release immediately and finishes the progress bar after every check.",
   "required_packages": [
     "wl-clipboard",
     "ImageMagick",
@@ -15,7 +15,7 @@
     {
       "source": "payload/aurora_updater.py",
       "target": "~/.local/bin/aurora_updater.py",
-      "sha256": "0f517d086b2704768df12f32a56de2df1bb11531a4f137db0b72b1eabadd3bad",
+      "sha256": "3dee891f56cf3ac1f20a992349430436afe7e4536aa755345ddc09afcc65ed2a",
       "mode": "755"
     },
     {
@@ -74,5 +74,5 @@
     "file": "LICENSE",
     "copyright": "Copyright (c) 2026 Hrwoje Dabo, media4now.nl"
   },
-  "release_name": "Aurora Settings Licensing & Update History"
+  "release_name": "Aurora Updates Status & Version Display"
 }

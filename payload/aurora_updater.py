@@ -112,7 +112,11 @@ def build_card():
     title = Gtk.Label(label="<b>Aurora Updates</b>", use_markup=True, xalign=0.5); title.add_css_class("title-3"); outer.append(title)
     intro = Gtk.Label(label="Werk Aurora-componenten bij via de beheerde GitHub-repository. Void- en Flatpak-updates blijven in hun eigen beheerpagina.", wrap=True, xalign=0.0); outer.append(intro)
     status = Gtk.Label(label="Nog niet gecontroleerd.", wrap=True, xalign=0.0); outer.append(status)
-    installed_info = Gtk.Label(label="Geïnstalleerde versie: nog niet vastgesteld", wrap=True, xalign=0.0); installed_info.add_css_class("dim-label"); outer.append(installed_info)
+    previous = installed()
+    previous_text = "Geïnstalleerde versie: nog niet vastgesteld"
+    if previous.get("version"):
+        previous_text = f"Geïnstalleerd: {previous.get('release_name', previous.get('version'))} · versie {previous.get('version')} · {previous.get('installed_at', 'onbekende datum')}"
+    installed_info = Gtk.Label(label=previous_text, wrap=True, xalign=0.0); installed_info.add_css_class("dim-label"); outer.append(installed_info)
     progress = Gtk.ProgressBar(); progress.set_show_text(True); progress.set_fraction(0); progress.set_text("Wachten"); outer.append(progress)
     notes = Gtk.Label(label="", wrap=True, xalign=0.0); notes.add_css_class("dim-label"); outer.append(notes)
     buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -126,6 +130,7 @@ def build_card():
             progress.set_fraction(max(0.0, min(1.0, float(event.get("fraction", 0)))))
             progress.set_text(event.get("message", "Bezig…"))
         elif event.get("event") == "result":
+            progress.set_fraction(1.0)
             if event.get("ok"):
                 if event.get("installed_at"):
                     installed_info.set_text(f"Geïnstalleerd: {event.get('release_name', event.get('version'))} · versie {event.get('version')} · {event.get('installed_at')}")
@@ -135,8 +140,10 @@ def build_card():
                     install_button.set_sensitive(True)
                 else:
                     status.set_text(f"Aurora {event.get('version', 'componenten')} is actueel.")
+                progress.set_text("Controle voltooid")
                 notes.set_text(event.get("release_notes", ""))
             else:
+                progress.set_text("Controle mislukt")
                 status.set_text("Aurora-update mislukt: " + str(event.get("error", "onbekende fout")))
                 install_button.set_sensitive(False)
 

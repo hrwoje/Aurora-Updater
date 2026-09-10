@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Aurora-logo: gestileerde poollicht-golf op nachtzwart -->
+  <defs>
+    <linearGradient id="aurora" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#5b4bc4"/>
+      <stop offset="55%" stop-color="#7c6cf0"/>
+      <stop offset="100%" stop-color="#a295f7"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="48" fill="#101018"/>
+  <path d="M 32 176 C 72 128, 96 196, 128 148 S 192 108, 224 148"
+        fill="none" stroke="url(#aurora)" stroke-width="16" stroke-linecap="round"/>
+  <path d="M 32 208 C 80 168, 104 220, 136 180 S 196 148, 224 180"
+        fill="none" stroke="url(#aurora)" stroke-width="10" stroke-linecap="round" opacity="0.6"/>
+  <circle cx="192" cy="64" r="14" fill="#f5f0ff" opacity="0.9"/>
+</svg>

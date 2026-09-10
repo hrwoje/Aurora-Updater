@@ -1,0 +1,363 @@
+#!/usr/bin/python3
+"""Aurora AI Needle: lokale, gecontroleerde pc-onderhoudsagent.
+
+De agent gebruikt alleen vaste systeemcommando's en officiële Aurora/Void-acties.
+Hij bewaart een rapport, vraagt polkit voor root-acties en stopt veilig bij fouten.
+"""
+import fcntl, json, os, platform, shutil, stat, subprocess, sys, time
+from datetime import datetime, timezone
+
+STATE = os.path.expanduser("~/.config/aurora/settings.json")
+BASE = os.path.expanduser("~/.local/state/aurora-ai-manager")
+LOG = os.path.join(BASE, "manager.log")
+REPORT = os.path.join(BASE, "last-report.json")
+MEMORY = os.path.join(BASE, "knowledge.json")
+PIDFILE = os.path.join(BASE, "manager.pid")
+LOCKFILE = os.path.join(BASE, "run.lock")
+
+def load():
+    try:
+        with open(STATE, encoding="utf-8") as f: return json.load(f)
+    except Exception: return {}
+
+def log(line):
+    os.makedirs(BASE, mode=0o700, exist_ok=True)
+    with open(LOG, "a", encoding="utf-8") as f:
+        f.write(f"{datetime.now().isoformat(timespec='seconds')} {line}\n")
+
+def remember(report):
+    """Persist bounded operational knowledge, never passwords or file contents."""
+    try:
+        with open(MEMORY, encoding="utf-8") as f: memory = json.load(f)
+    except Exception: memory = {"schema": 2, "runs": [], "facts": {}, "patterns": {}}
+    memory.setdefault("schema", 2); memory.setdefault("patterns", {})
+    failures = {item["name"] for item in report["checks"] if item["returncode"] != 0}
+    previous = set(memory.get("facts", {}).get("last_failures", []))
+    for name in failures:
+        pattern = memory["patterns"].setdefault(name, {"occurrences": 0, "last_seen": None, "resolved_runs": 0})
+        pattern["occurrences"] += 1; pattern["last_seen"] = report["timestamp"]
+    for name in set(memory["patterns"]) - failures:
+        if name in previous:
+            memory["patterns"][name]["resolved_runs"] = memory["patterns"][name].get("resolved_runs", 0) + 1
+    memory.setdefault("runs", []).append({
+        "timestamp": report["timestamp"], "mode": report["mode"],
+        "checks": {item["name"]: item["returncode"] for item in report["checks"]},
+        "actions": [{"action": item["action"], "returncode": item["returncode"]} for item in report["actions"]],
+    })
+    memory["runs"] = memory["runs"][-30:]
+    memory.setdefault("facts", {})["last_kernel"] = platform.release()
+    memory["facts"]["last_mode"] = report["mode"]
+    memory["facts"]["last_failures"] = [x["name"] for x in report["checks"] if x["returncode"] != 0]
+    memory["facts"]["learning_summary"] = {
+        "known_patterns": len(memory["patterns"]),
+        "active_patterns": len(failures),
+        "resolved_since_previous_run": sorted(previous - failures),
+    }
+    memory["facts"]["last_successful_actions"] = [x["action"] for x in report["actions"] if x["returncode"] == 0]
+    os.makedirs(BASE, mode=0o700, exist_ok=True)
+    with open(MEMORY, "w", encoding="utf-8") as f: json.dump(memory, f, indent=2)
+    os.chmod(MEMORY, 0o600)
+
+def cmd(*args, timeout=120):
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    except Exception as e:
+        return subprocess.CompletedProcess(args, 1, "", str(e))
+
+def check(name, *args, timeout=30):
+    r = cmd(*args, timeout=timeout)
+    text = (r.stdout or r.stderr or "").strip()
+    return {"name": name, "returncode": r.returncode, "output": text[-4000:]}
+
+def repair_user_permissions():
+    """Repair only Aurora-owned user state; never recursively chown system files."""
+    uid = os.getuid(); repaired = []; blocked = []
+    dirs = [os.path.expanduser("~/.config/aurora"), os.path.expanduser("~/.local/state/aurora-ai-manager")]
+    for directory in dirs:
+        try:
+            os.makedirs(directory, mode=0o700, exist_ok=True)
+            st = os.stat(directory)
+            if st.st_uid != uid: blocked.append(directory)
+            elif stat.S_IMODE(st.st_mode) != 0o700:
+                os.chmod(directory, 0o700); repaired.append(directory)
+            for name in os.listdir(directory):
+                path = os.path.join(directory, name)
+                st = os.stat(path)
+                if st.st_uid != uid:
+                    blocked.append(path); continue
+                desired = 0o600 if os.path.isfile(path) else 0o700
+                if stat.S_IMODE(st.st_mode) != desired:
+                    os.chmod(path, desired); repaired.append(path)
+        except OSError as exc:
+            blocked.append(f"{directory}: {exc}")
+    return {"repaired": repaired, "blocked": blocked}
+
+def error_summary(report):
+    failures = [x for x in report["checks"] if x["returncode"] != 0]
+    categories = {}
+    for item in failures:
+        text = item["output"].lower()
+        if "permission" in text or "access denied" in text or "not root" in text:
+            key = "rechten/polkit"
+        elif "no such file" in text or "not found" in text:
+            key = "ontbrekende software"
+        elif "failed" in text or "error" in text or "critical" in text:
+            key = "systeemfout"
+        else:
+            key = "controle niet beschikbaar"
+        categories.setdefault(key, []).append(item["name"])
+    return {"count": len(failures), "categories": categories}
+
+def health_and_plan(report):
+    failures = [x["name"] for x in report["checks"] if x["returncode"] != 0]
+    actionable = [x for x in report["checks"] if x["returncode"] != 0 and not any(token in x["output"].lower() for token in ("permission", "access denied", "not root", "operation not permitted", "not found"))]
+    critical = {"kernel", "storage", "xbps-integrity", "disk-health:/dev/nvme0n1", "disk-health:/dev/nvme1n1"}
+    score = max(0, 100 - sum(12 if item["name"] in critical else 3 for item in actionable))
+    recommendations = []
+    if any(name.startswith("disk-health:") for name in failures): recommendations.append("SMART-controle vereist handmatige beoordeling")
+    if "xbps-updates" in failures: recommendations.append("XBPS-updatecontrole is niet beschikbaar")
+    if "firmware-updates" in failures: recommendations.append("fwupd-resultaat controleren in een polkit-sessie")
+    if "storage" in failures: recommendations.append("Vrije root-opslag controleren")
+    if any(name.startswith("service:") for name in failures): recommendations.append("Runit-servicefouten bekijken; alleen bekende services worden herstart")
+    return {"score": score, "status": "goed" if score >= 90 else "aandacht" if score >= 70 else "kritiek", "failures": failures, "recommendations": recommendations}
+
+def preflight():
+    usage = shutil.disk_usage("/")
+    free_percent = 100.0 * usage.free / usage.total if usage.total else 0
+    route = cmd("ip", "route", "show", "default", timeout=10)
+    return {"ok": free_percent >= 5 and route.returncode == 0 and bool(route.stdout.strip()), "free_percent": round(free_percent, 1), "default_route": route.returncode == 0 and bool(route.stdout.strip())}
+
+def clear_stale_pid():
+    try:
+        with open(PIDFILE, encoding="ascii") as f: pid = int(f.read().strip())
+        os.kill(pid, 0)
+    except (OSError, ValueError):
+        try: os.remove(PIDFILE)
+        except OSError: pass
+
+def root_action(action, *args, timeout=900):
+    # Only actions implemented by the system-owned Aurora administrator are used.
+    allowed = {"update-apply", "fwupd-update", "pkg-install", "sysctl-apply", "service-restart", "reconfigure"}
+    if action not in allowed: return {"action": action, "returncode": 2, "output": "niet toegestaan"}
+    if action == "service-restart":
+        if len(args) != 1 or args[0] not in {"NetworkManager", "dhcpcd", "iwd", "wpa_supplicant", "dbus"}:
+            return {"action": action, "returncode": 2, "output": "service niet toegestaan"}
+        command = ("service", "restart", args[0])
+    elif action == "reconfigure":
+        command = None
+    else:
+        command = (action,) + args
+    if action == "reconfigure":
+        r = cmd("pkexec", "/usr/sbin/xbps-reconfigure", "-fa", timeout=timeout)
+    else:
+        r = cmd("pkexec", "/usr/bin/aurora-system-admin", *command, timeout=timeout)
+    text = (r.stdout or r.stderr or "").strip()
+    log(f"rootactie {action} rc={r.returncode}: {text[-500:]}")
+    return {"action": action, "returncode": r.returncode, "output": text[-4000:]}
+
+def user_action(action, timeout=900):
+    commands = {
+        "flatpak-repair-user": ("flatpak", "repair", "--user"),
+        "flatpak-update-user": ("flatpak", "update", "--user", "-y"),
+    }
+    if action not in commands: return {"action": action, "returncode": 2, "output": "niet toegestaan"}
+    r = cmd(*commands[action], timeout=timeout)
+    text = (r.stdout or r.stderr or "").strip(); log(f"gebruikersactie {action} rc={r.returncode}: {text[-500:]}")
+    return {"action": action, "returncode": r.returncode, "output": text[-4000:]}
+
+def appimage_repair(repair=False):
+    repaired = []; blocked = []; diagnostics = []
+    for directory in (os.path.expanduser("~/AppImages"), os.path.expanduser("~/.local/bin")):
+        if not os.path.isdir(directory): continue
+        for path in sorted(os.listdir(directory)):
+            full = os.path.join(directory, path)
+            if not os.path.isfile(full) or not path.lower().endswith(".appimage"): continue
+            try:
+                st = os.stat(full)
+                if st.st_uid != os.getuid(): blocked.append(full); continue
+                if not (st.st_mode & stat.S_IXUSR) and repair:
+                    os.chmod(full, stat.S_IMODE(st.st_mode) | stat.S_IXUSR); repaired.append(full)
+                diagnostics.append(check(f"appimage:{path}", "file", full, timeout=15))
+            except OSError as exc: blocked.append(f"{full}: {exc}")
+    return {"repaired": repaired, "blocked": blocked, "diagnostics": diagnostics}
+
+def user_library_checks():
+    checks = []; seen = 0
+    for directory in (os.path.expanduser("~/.local/bin"), os.path.expanduser("~/bin")):
+        if not os.path.isdir(directory): continue
+        for name in sorted(os.listdir(directory)):
+            path = os.path.join(directory, name)
+            if seen >= 30: return checks
+            try:
+                if os.path.isfile(path) and os.access(path, os.X_OK):
+                    result = check(f"libraries:{name}", "ldd", path, timeout=20)
+                    if "not found" in result["output"]: checks.append(result)
+                    seen += 1
+            except OSError: continue
+    return checks
+
+def run_once(mode):
+    os.makedirs(BASE, mode=0o700, exist_ok=True)
+    clear_stale_pid()
+    lock_handle = open(LOCKFILE, "a+", encoding="ascii")
+    try:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return {"timestamp": datetime.now(timezone.utc).isoformat(), "mode": mode, "status": "already-running", "checks": [], "actions": []}
+    report = {"timestamp": datetime.now(timezone.utc).isoformat(), "mode": mode, "checks": [], "actions": [], "capabilities": {
+        "automatic": ["xbps-update", "xbps-reconfigure", "fwupd-update", "safe-sysctl", "user-permission-repair", "flatpak-user-repair", "flatpak-user-update", "user-appimage-executable", "known-network-service-restart"],
+        "diagnostic_only": ["bootloader-write", "arbitrary-process-kill", "system-flatpak-repair", "unknown-library-install", "firewall-policy-change", "kernel-source-patching"],
+    }}
+    report["checks"].append(check("kernel", "uname", "-r"))
+    report["checks"].append(check("kernel-images", "sh", "-c", "ls -l /boot/vmlinuz-* /boot/initramfs-* 2>/dev/null"))
+    report["checks"].append(check("xbps-updates", "xbps-install", "-un", timeout=45))
+    report["checks"].append(check("xbps-integrity", "xbps-pkgdb", "-a", timeout=60))
+    report["checks"].append(check("flatpak-list", "flatpak", "list", "--app", timeout=30))
+    report["checks"].append(check("flatpak-repair-dry", "flatpak", "repair", "--user", "--dry-run", timeout=60))
+    report["checks"].append(check("firmware-updates", "fwupdmgr", "get-updates", timeout=45))
+    report["checks"].append(check("firmware-devices", "fwupdmgr", "get-devices", timeout=45))
+    report["checks"].append(check("drivers", "lspci", "-nnk", timeout=30))
+    report["checks"].append(check("firewall", "ufw", "status", timeout=20))
+    apparmor_check = check("apparmor", "aa-status", timeout=20)
+    if apparmor_check["returncode"] == 4 and "apparmor module is loaded" in apparmor_check["output"].lower():
+        apparmor_check["returncode"] = 0
+    report["checks"].append(apparmor_check)
+    report["checks"].append(check("memory", "free", "-h"))
+    report["checks"].append(check("storage", "df", "-h", "/"))
+    report["checks"].append(check("mounts", "findmnt", "-rn", timeout=20))
+    report["checks"].append(check("btrfs-usage", "btrfs", "filesystem", "usage", "/", timeout=30))
+    report["checks"].append(check("btrfs-scrub", "btrfs", "scrub", "status", "/", timeout=30))
+    report["checks"].append(check("trim-capability", "fstrim", "--dry-run", "-v", "/", timeout=30))
+    report["checks"].append(check("power-profile", "powerprofilesctl", "get", timeout=15))
+    report["checks"].append(check("temperatures", "sensors", timeout=20))
+    report["checks"].append(check("kernel-errors", "dmesg", "--level=err,warn", "-T", timeout=20))
+    report["checks"].append(check("boot-errors", "journalctl", "-b", "-p", "err", "--no-pager", timeout=30))
+    report["checks"].append(check("previous-boot-errors", "journalctl", "-b", "-1", "-p", "err", "--no-pager", timeout=30))
+    report["checks"].append(check("previous-kernel-warnings", "journalctl", "-b", "-1", "-k", "-p", "warning", "--no-pager", timeout=30))
+    report["checks"].append(check("power-events", "last", "-x", "-n", "20", timeout=20))
+    report["checks"].append(check("bootloader-config", "test", "-r", "/boot/limine/limine.conf", timeout=10))
+    report["checks"].append(check("initramfs-images", "sh", "-c", "for k in /boot/vmlinuz-*; do v=${k##*/vmlinuz-}; test -s /boot/initramfs-$v.img || exit 1; done", timeout=20))
+    report["checks"].append(check("network", "ip", "-br", "addr", timeout=15))
+    report["checks"].append(check("network-routes", "ip", "route", timeout=15))
+    report["checks"].append(check("network-dns", "resolvectl", "status", timeout=20))
+    report["checks"].append(check("network-manager", "nmcli", "-t", "-f", "GENERAL.STATE,GENERAL.CONNECTION", "general", timeout=20))
+    report["checks"].append(check("network-sockets", "ss", "-s", timeout=15))
+    report["checks"].append(check("processes", "ps", "-eo", "pid,ppid,stat,pcpu,pmem,comm", "--sort=-pcpu", timeout=20))
+    report["checks"].append(check("recent-journal-errors", "journalctl", "-b", "-p", "err..alert", "--no-pager", "-n", "100", timeout=30))
+    report["checks"].append(check("upower", "upower", "-d", timeout=30))
+    report["checks"].append(check("niri-config", "niri", "validate", timeout=30))
+    appimages = appimage_repair() if mode == "monitor" else {"repaired": [], "blocked": [], "diagnostics": []}
+    report["checks"].extend(appimages["diagnostics"])
+    report["checks"].extend(user_library_checks())
+    disks = cmd("lsblk", "-dnpo", "NAME,TYPE", timeout=15)
+    if disks.returncode == 0:
+        for line in disks.stdout.splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[1] == "disk" and not parts[0].endswith("zram0"):
+                report["checks"].append(check(f"disk-health:{parts[0]}", "smartctl", "-H", parts[0], timeout=30))
+    services = []
+    service_dir = "/var/service"
+    if os.path.isdir(service_dir):
+        for name in sorted(os.listdir(service_dir))[:100]:
+            services.append(check(f"service:{name}", "sv", "status", name, timeout=10))
+    report["checks"].extend(services)
+    report["preflight"] = preflight()
+    report["errors"] = error_summary(report)
+    report["health"] = health_and_plan(report)
+
+    if mode == "maintenance":
+        if not report["preflight"]["ok"]:
+            report["actions"].append({"action": "maintenance-blocked-preflight", "returncode": 2, "output": report["preflight"]})
+        else:
+            permissions = repair_user_permissions()
+            report["actions"].append({"action": "repair-user-permissions", "returncode": 0 if not permissions["blocked"] else 1, **permissions})
+        # Official package update action creates the configured pre/post snapshot.
+            report["actions"].append(root_action("update-apply"))
+            # Reconfigure installed packages and regenerate module metadata after
+            # updates; this is the supported Void repair path for boot modules.
+            report["actions"].append(root_action("reconfigure", timeout=900))
+            report["actions"].append(user_action("flatpak-repair-user", timeout=300))
+            report["actions"].append(user_action("flatpak-update-user", timeout=900))
+            report["actions"].append({"action": "repair-appimage-executable", "returncode": 0, **appimage_repair(repair=True)})
+        # Firmware update is only performed through fwupd's supported device path.
+            report["actions"].append(root_action("fwupd-update"))
+        # Install only safe, repository-owned hardware support packages when absent.
+            installed = (cmd("xbps-query", "-l", timeout=30).stdout or "")
+            hardware = (cmd("lspci", "-nnk", timeout=30).stdout or "")
+            packages = ["linux-firmware", "fwupd"]
+            cpuinfo = (cmd("cat", "/proc/cpuinfo", timeout=10).stdout or "")
+            if "AuthenticAMD" in cpuinfo: packages.append("amd-ucode")
+            elif "GenuineIntel" in cpuinfo: packages.append("intel-ucode")
+            if "1002:" in hardware or "Radeon" in hardware: packages += ["mesa-dri", "mesa-vulkan-radeon", "mesa-vaapi"]
+            elif "8086:" in hardware and "VGA" in hardware: packages += ["mesa-dri", "mesa-vulkan-intel", "intel-media-driver"]
+            installed = (cmd("xbps-query", "-l", timeout=30).stdout or "")
+            for package in packages:
+                if package not in installed:
+                    available = cmd("xbps-query", "-Rs", f"^{package}-", timeout=20)
+                    if available.returncode == 0 and available.stdout.strip(): report["actions"].append(root_action("pkg-install", package, timeout=600))
+        # Conservative kernel tuning: only existing keys are changed, and only
+        # values already exposed by Aurora's settings page are used.
+            safe_tuning = [
+                ("vm.swappiness", "10"),
+                ("vm.dirty_background_ratio", "5"),
+                ("vm.dirty_ratio", "10"),
+                ("vm.vfs_cache_pressure", "50"),
+                ("fs.inotify.max_user_watches", "524288"),
+                ("fs.inotify.max_user_instances", "1024"),
+            ]
+            for key, value in safe_tuning:
+                live = cmd("sysctl", "-n", key, timeout=5)
+                if live.returncode == 0 and (live.stdout or "").strip() != value: report["actions"].append(root_action("sysctl-apply", key, value, timeout=30))
+        # Network recovery is restricted to a known runit service that is
+        # actually enabled. No arbitrary process is terminated.
+            nm = next((x for x in report["checks"] if x["name"] == "network-manager"), None)
+            service_dir = "/var/service"
+            if nm and nm["returncode"] != 0 and os.path.isdir(os.path.join(service_dir, "NetworkManager")): report["actions"].append(root_action("service-restart", "NetworkManager", timeout=90))
+    # Cleanup is deliberately limited to stale user cache files; no system files are removed.
+    cleaned = 0
+    cache = os.path.expanduser("~/.cache")
+    if mode == "maintenance" and os.path.isdir(cache):
+        cutoff = time.time() - 30 * 86400
+        for root, dirs, files in os.walk(cache):
+            for filename in files:
+                path = os.path.join(root, filename)
+                try:
+                    if os.path.getmtime(path) < cutoff and os.path.getsize(path) < 512 * 1024 * 1024:
+                        os.remove(path); cleaned += 1
+                except OSError: pass
+    report["cleanup"] = {"stale_user_cache_files_removed": cleaned}
+    os.makedirs(BASE, mode=0o700, exist_ok=True)
+    with open(REPORT, "w", encoding="utf-8") as f: json.dump(report, f, indent=2)
+    os.chmod(REPORT, 0o600)
+    remember(report)
+    log(f"controle afgerond mode={mode} acties={len(report['actions'])} cache={cleaned}")
+    return report
+
+def main():
+    settings = load(); enabled = bool(settings.get("ai.manager.enabled", False))
+    mode = settings.get("ai.manager.mode", "monitor")
+    if mode not in ("monitor", "maintenance"): mode = "monitor"
+    if "--repair-user" in sys.argv:
+        result = repair_user_permissions()
+        print(json.dumps(result, indent=2)); return 0 if not result["blocked"] else 1
+    if "--check-only" in sys.argv:
+        run_once("monitor"); return 0
+    if "--once" in sys.argv:
+        if not enabled and "--force" not in sys.argv:
+            log("uitgeschakeld; geen controle uitgevoerd"); return 0
+        run_once(mode); return 0
+    if "--daemon" in sys.argv:
+        os.makedirs(BASE, mode=0o700, exist_ok=True)
+        with open(PIDFILE, "w", encoding="ascii") as f: f.write(str(os.getpid()))
+        try:
+            while True:
+                settings = load(); enabled = bool(settings.get("ai.manager.enabled", False))
+                if not enabled: return 0
+                run_once(settings.get("ai.manager.mode", "monitor"))
+                time.sleep(6 * 3600)
+        finally:
+            try: os.remove(PIDFILE)
+            except OSError: pass
+    return 0
+
+if __name__ == "__main__": sys.exit(main())

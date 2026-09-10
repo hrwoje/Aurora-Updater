@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "version": "2026.09.10.1",
+  "channel": "stable",
+  "release_notes": "Aurora component updater, refreshed Settings, AI manager, keyboard actions and Aurora branding.",
+  "required_packages": [
+    "wl-clipboard",
+    "ImageMagick",
+    "tesseract-ocr",
+    "tesseract-ocr-basic",
+    "tesseract-ocr-eng",
+    "tesseract-ocr-nld"
+  ],
+  "files": [
+    {
+      "source": "payload/aurora_updater.py",
+      "target": "~/.local/bin/aurora_updater.py",
+      "sha256": "f5c006dcbcde04f84ee26408850d9142eb414d7f18c42e092f65f76054a39123",
+      "mode": "755"
+    },
+    {
+      "source": "payload/aurora-settings",
+      "target": "~/.local/bin/aurora-settings",
+      "sha256": "f82c6d26b60bca91b034a8eeb017fb4819f2f736541ea9a07eece666a42d1705",
+      "mode": "755"
+    },
+    {
+      "source": "payload/aurora_shortcuts.py",
+      "target": "~/.local/bin/aurora_shortcuts.py",
+      "sha256": "525cf6c725804948237d818e0e988b1ba75a8bd6c919912299a70ebe99aa6ba0",
+      "mode": "644"
+    },
+    {
+      "source": "payload/aurora-ai-manager",
+      "target": "~/.local/bin/aurora-ai-manager",
+      "sha256": "c7fd09e4bf49f9c793fc8343f6ff45763bee154aba695bd1917062cae10cf499",
+      "mode": "755"
+    },
+    {
+      "source": "payload/aurora.svg",
+      "target": "~/.local/share/icons/hicolor/scalable/apps/aurora.svg",
+      "sha256": "1ad71714b4ba28321e42bcaddd7bbb3e72b2e5f91e70e7b6d737b8765ea16a95",
+      "mode": "644"
+    }
+  ]
+}

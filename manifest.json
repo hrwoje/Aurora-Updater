@@ -1,15 +1,16 @@
 {
   "schema": 1,
-  "version": "2026.09.10.12",
+  "version": "2026.09.10.13",
   "channel": "stable",
-  "release_notes": "Checks now explicitly report up-to-date, re-enable the check button after every result and keep installation disabled when no update exists.",
+  "release_notes": "Added qrencode to the explicit Aurora dependency set; qrencode 4.1.1 is installed and verified on this system.",
   "required_packages": [
     "wl-clipboard",
     "ImageMagick",
     "tesseract-ocr",
     "tesseract-ocr-basic",
     "tesseract-ocr-eng",
-    "tesseract-ocr-nld"
+    "tesseract-ocr-nld",
+    "qrencode"
   ],
   "files": [
     {
@@ -74,5 +75,5 @@
     "file": "LICENSE",
     "copyright": "Copyright (c) 2026 Hrwoje Dabo, media4now.nl"
   },
-  "release_name": "Aurora Updates Retry & Up-to-date Status"
+  "release_name": "Aurora QR Encode Dependency"
 }

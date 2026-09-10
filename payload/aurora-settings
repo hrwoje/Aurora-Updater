@@ -508,7 +508,29 @@ class AuroraSettingsApp(Gtk.Application):
 
         sep = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
         main_box.append(sep)
-        main_box.append(self.stack)
+        content_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        content_box.set_hexpand(True)
+        content_box.set_vexpand(True)
+        content_box.append(self.stack)
+        license_footer = Gtk.Frame()
+        license_footer.add_css_class("card")
+        license_footer.set_margin_start(16)
+        license_footer.set_margin_end(16)
+        license_footer.set_margin_top(8)
+        license_footer.set_margin_bottom(10)
+        license_label = Gtk.Label(
+            label="<b>Aurora Proprietary License v1.0</b>  ·  Copyright © 2026 Hrwoje Dabo, media4now.nl\n"
+                  "Gebruik onder de Aurora-licentie. Derde-partijsoftware behoudt de eigen licentie. "
+                  "Volledige tekst: ~/.local/share/doc/aurora/AURORA-LICENSE.txt",
+            use_markup=True, xalign=0.0, wrap=True,
+        )
+        license_label.set_margin_start(12)
+        license_label.set_margin_end(12)
+        license_label.set_margin_top(8)
+        license_label.set_margin_bottom(8)
+        license_footer.set_child(license_label)
+        content_box.append(license_footer)
+        main_box.append(content_box)
 
         self.win = win
 

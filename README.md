@@ -16,3 +16,13 @@ The manifest can deliver Aurora Settings, the AI manager, keyboard shortcuts, us
 4. On another Aurora installation open **Systeeminfo → Aurora Updates** and press **Controleren**. The user sees the release notes and a live progress bar before installing.
 
 The client accepts only these user-owned targets: `~/.local/bin`, `~/.config/aurora`, `~/.config/autostart`, `~/.local/share/applications`, `~/.local/share/icons`, `~/.local/share/fonts`, and GTK configuration directories. Repository scripts are never executed.
+
+## License and attribution
+
+Original Aurora materials are copyright © 2026 Hrwoje Dabo, media4now.nl, and
+are provided under the **Aurora Proprietary License v1.0** in [`LICENSE`](LICENSE).
+The updater installs a copy at `~/.local/share/doc/aurora/AURORA-LICENSE.txt` so
+the license travels with the Aurora installation. Void, Niri, Noctalia, GTK,
+Flatpak and all other third-party components remain under their own licenses.
+The Aurora name, logo and branding require separate permission for any use that
+suggests official endorsement.

@@ -5,7 +5,7 @@ import argparse, hashlib, json, os, re, shutil, subprocess, sys, tempfile, time,
 from pathlib import Path
 REPO="https://raw.githubusercontent.com/hrwoje/Aurora-Updater/main"; MANIFEST_URL=os.environ.get("AURORA_UPDATER_MANIFEST_URL",f"{REPO}/manifest.json")
 STATE=Path(os.environ.get("XDG_STATE_HOME",Path.home()/".local/state"))/"aurora-updater"; INSTALLED=STATE/"installed.json"; BACKUPS=STATE/"backups"
-ALLOWED_PREFIXES=tuple(Path.home()/x for x in (".local/bin",".config/aurora",".config/autostart",".local/share/applications",".local/share/icons",".local/share/fonts",".config/gtk-3.0",".config/gtk-4.0")); SYSTEM_PREFIXES=(Path("/etc/xbps.d"),Path("/etc/aurora")); PACKAGE_RE=re.compile(r"^[A-Za-z0-9+_.-]+$")
+ALLOWED_PREFIXES=tuple(Path.home()/x for x in (".local/bin",".config/aurora",".config/autostart",".local/share/applications",".local/share/icons",".local/share/fonts",".local/share/doc/aurora",".config/gtk-3.0",".config/gtk-4.0")); SYSTEM_PREFIXES=(Path("/etc/xbps.d"),Path("/etc/aurora")); PACKAGE_RE=re.compile(r"^[A-Za-z0-9+_.-]+$")
 def emit(event,**data): print(json.dumps({"event":event,**data},ensure_ascii=False),flush=True)
 def notify(title,message):
     if shutil.which("notify-send"):

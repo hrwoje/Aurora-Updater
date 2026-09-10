@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": "2026.09.10.10",
+  "version": "2026.09.10.12",
   "channel": "stable",
-  "release_notes": "Repository checks now have a GTK-main-loop watchdog that terminates a silent updater process after 30 seconds.",
+  "release_notes": "Checks now explicitly report up-to-date, re-enable the check button after every result and keep installation disabled when no update exists.",
   "required_packages": [
     "wl-clipboard",
     "ImageMagick",
@@ -15,7 +15,7 @@
     {
       "source": "payload/aurora_updater.py",
       "target": "~/.local/bin/aurora_updater.py",
-      "sha256": "874d27074019fe719ecb36aaa0b3971a8f1e8d88f392abe742b35c719b159983",
+      "sha256": "185d7ceea817981901e56333437322ce622aba4388ce2e9c729901bc30e1321e",
       "mode": "755"
     },
     {
@@ -74,5 +74,5 @@
     "file": "LICENSE",
     "copyright": "Copyright (c) 2026 Hrwoje Dabo, media4now.nl"
   },
-  "release_name": "Aurora Updates Hard Watchdog"
+  "release_name": "Aurora Updates Retry & Up-to-date Status"
 }

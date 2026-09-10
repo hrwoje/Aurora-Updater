@@ -111,6 +111,7 @@ def build_card():
     logo.set_pixel_size(72); logo.set_halign(Gtk.Align.CENTER); logo.set_tooltip_text("Aurora OS"); outer.append(logo)
     title = Gtk.Label(label="<b>Aurora Updates</b>", use_markup=True, xalign=0.5); title.add_css_class("title-3"); outer.append(title)
     intro = Gtk.Label(label="Werk Aurora-componenten bij via de beheerde GitHub-repository. Void- en Flatpak-updates blijven in hun eigen beheerpagina.", wrap=True, xalign=0.0); outer.append(intro)
+    build_info = Gtk.Label(label="Updater-build 2026.09.10.10 · echte repositorystatus · watchdog 30 s", xalign=0.0); build_info.add_css_class("dim-label"); outer.append(build_info)
     status = Gtk.Label(label="Nog niet gecontroleerd.", wrap=True, xalign=0.0); outer.append(status)
     previous = installed()
     previous_text = "Geïnstalleerde versie: nog niet vastgesteld"
@@ -132,6 +133,8 @@ def build_card():
             progress.set_fraction(max(0.0, min(1.0, float(event.get("fraction", 0)))))
             progress.set_text(event.get("message", "Bezig…"))
         elif event.get("event") == "result":
+            running[0] = False
+            check_button.set_sensitive(True)
             if watchdog_id[0] is not None:
                 GLib.source_remove(watchdog_id[0]); watchdog_id[0] = None
             progress.set_fraction(1.0)
@@ -144,7 +147,8 @@ def build_card():
                     status.set_text(f"{event.get('release_name', 'Aurora')} ({event.get('version')}) beschikbaar: {len(files)} bestand(en), {len(packages)} pakket(en).")
                     install_button.set_sensitive(True)
                 else:
-                    status.set_text(f"Aurora {event.get('version', 'componenten')} is actueel.")
+                    status.set_text(f"Aurora {event.get('version', 'componenten')} is up-to-date — er is geen nieuwe Aurora-update.")
+                    install_button.set_sensitive(False)
                 progress.set_text("Controle voltooid")
                 notes.set_text(event.get("release_notes", ""))
             else:
@@ -163,6 +167,9 @@ def build_card():
         def watchdog():
             if running[0] and proc.poll() is None:
                 proc.kill()
+                running[0] = False
+                check_button.set_sensitive(True)
+                install_button.set_sensitive(False)
                 handle({"event": "result", "ok": False, "error": "De Aurora-repository gaf binnen 30 seconden geen antwoord. Controleer internet, DNS of GitHub."})
                 return False
             return False
@@ -177,6 +184,7 @@ def build_card():
                 if watchdog_id[0] is not None: GLib.source_remove(watchdog_id[0]); watchdog_id[0] = None
                 check_button.set_sensitive(True)
                 if mode == "--install" and rc == 0: install_button.set_sensitive(False)
+                check_button.set_sensitive(True)
                 return False
             GLib.idle_add(done)
         threading.Thread(target=read, daemon=True).start()

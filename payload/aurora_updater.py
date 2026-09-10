@@ -123,6 +123,7 @@ def build_card():
     check_button, install_button = Gtk.Button(label="Controleren"), Gtk.Button(label="Aurora bijwerken")
     install_button.set_sensitive(False); buttons.append(check_button); buttons.append(install_button); outer.append(buttons)
     running = [False]
+    pulse_id = [None]
 
     def handle(event):
         if event.get("event") == "status": status.set_text(event.get("message", "Bezig…"))
@@ -130,6 +131,8 @@ def build_card():
             progress.set_fraction(max(0.0, min(1.0, float(event.get("fraction", 0)))))
             progress.set_text(event.get("message", "Bezig…"))
         elif event.get("event") == "result":
+            if pulse_id[0] is not None:
+                GLib.source_remove(pulse_id[0]); pulse_id[0] = None
             progress.set_fraction(1.0)
             if event.get("ok"):
                 if event.get("installed_at"):
@@ -149,10 +152,13 @@ def build_card():
 
     def run(mode):
         if running[0]: return
-        running[0] = True; check_button.set_sensitive(False); install_button.set_sensitive(False); progress.set_fraction(0); progress.set_text("Verbinden met Aurora-repository…")
-        try: proc = subprocess.Popen([sys.executable, __file__, mode], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        running[0] = True; check_button.set_sensitive(False); install_button.set_sensitive(False); status.set_text("Controle wordt gestart…"); progress.set_fraction(0.03); progress.set_text("Verbinden met Aurora-repository…")
+        pulse_id[0] = GLib.timeout_add(180, lambda: (progress.pulse() or running[0]))
+        try: proc = subprocess.Popen([sys.executable, "-u", __file__, mode], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env={**os.environ, "PYTHONUNBUFFERED":"1"})
         except OSError as exc:
-            running[0] = False; check_button.set_sensitive(True); status.set_text(f"Updater kon niet starten: {exc}"); return
+            running[0] = False
+            if pulse_id[0] is not None: GLib.source_remove(pulse_id[0]); pulse_id[0] = None
+            check_button.set_sensitive(True); progress.set_fraction(0); progress.set_text("Updater kon niet starten"); status.set_text(f"Updater kon niet starten: {exc}"); return
         def read():
             for line in proc.stdout:
                 try: event = json.loads(line); GLib.idle_add(handle, event)
@@ -160,6 +166,7 @@ def build_card():
             rc = proc.wait()
             def done():
                 running[0] = False; check_button.set_sensitive(True)
+                if pulse_id[0] is not None: GLib.source_remove(pulse_id[0]); pulse_id[0] = None
                 if mode == "--install" and rc == 0: install_button.set_sensitive(False)
                 return False
             GLib.idle_add(done)

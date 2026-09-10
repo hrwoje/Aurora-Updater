@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse, hashlib, json, os, re, shutil, subprocess, sys, tempfile, time, urllib.request
 from pathlib import Path
 REPO="https://raw.githubusercontent.com/hrwoje/Aurora-Updater/main"; MANIFEST_URL=os.environ.get("AURORA_UPDATER_MANIFEST_URL",f"{REPO}/manifest.json")
-STATE=Path(os.environ.get("XDG_STATE_HOME",Path.home()/".local/state"))/"aurora-updater"; INSTALLED=STATE/"installed.json"; BACKUPS=STATE/"backups"
+STATE=Path(os.environ.get("XDG_STATE_HOME",Path.home()/".local/state"))/"aurora-updater"; INSTALLED=STATE/"installed.json"; HISTORY=STATE/"history.json"; BACKUPS=STATE/"backups"
 ALLOWED_PREFIXES=tuple(Path.home()/x for x in (".local/bin",".config/aurora",".config/autostart",".local/share/applications",".local/share/icons",".local/share/fonts",".local/share/doc/aurora",".config/gtk-3.0",".config/gtk-4.0")); SYSTEM_PREFIXES=(Path("/etc/xbps.d"),Path("/etc/aurora")); PACKAGE_RE=re.compile(r"^[A-Za-z0-9+_.-]+$")
 def emit(event,**data): print(json.dumps({"event":event,**data},ensure_ascii=False),flush=True)
 def notify(title,message):
@@ -16,7 +16,8 @@ def fetch(url):
     with urllib.request.urlopen(req,timeout=25) as response: return response.read()
 def manifest():
     data=json.loads(fetch(MANIFEST_URL).decode())
-    if data.get("schema")!=1 or not isinstance(data.get("version"),str): raise ValueError("ongeldig Aurora-manifestschema")
+    if data.get("schema")!=1 or not isinstance(data.get("version"),str) or not data.get("version"): raise ValueError("ongeldig Aurora-manifestschema")
+    if "release_name" in data and (not isinstance(data["release_name"], str) or not data["release_name"].strip()): raise ValueError("ongeldige release-naam")
     for item in data.get("files",[])+data.get("system_files",[]):
         if not isinstance(item,dict) or not item.get("source") or not item.get("target") or not re.fullmatch(r"[0-9a-f]{64}",item.get("sha256","")): raise ValueError("ongeldige file-entry")
         source=Path(item["source"])
@@ -48,13 +49,16 @@ def item_changed(item,system=False):
     return not target.exists() or hashlib.sha256(target.read_bytes()).hexdigest()!=item["sha256"]
 def check():
     data,old=manifest(),installed(); files=[i["target"] for i in data.get("files",[]) if item_changed(i)]; system_files=[i["target"] for i in data.get("system_files",[]) if item_changed(i,True)]
-    packages,system_packages=missing_packages(data,"required_packages"),missing_packages(data,"system_packages"); policy=data.get("system_policy",{}); actions=bool(system_files or system_packages) and bool(policy.get("refresh_xbps_metadata") or policy.get("refresh_certificates")); available=bool(files or system_files or packages or system_packages or actions or old.get("version")!=data["version"])
-    emit("result",ok=True,version=data["version"],previous=old.get("version"),release_notes=data.get("release_notes",""),files=files,system_files=system_files,packages=packages,system_packages=system_packages,update_available=available); return 0
+    packages,system_packages=missing_packages(data,"required_packages"),missing_packages(data,"system_packages"); policy=data.get("system_policy",{}); actions=bool(system_files or system_packages) and bool(policy.get("refresh_xbps_metadata") or policy.get("refresh_certificates")); same_version=old.get("version")==data["version"]; available=bool(files or system_files or packages or system_packages or actions or (old.get("version") and not same_version))
+    emit("result",ok=True,version=data["version"],release_name=data.get("release_name",data["version"]),previous=old.get("version"),installed_at=old.get("installed_at"),history=old.get("history",[]),release_notes=data.get("release_notes",""),files=files,system_files=system_files,packages=packages,system_packages=system_packages,update_available=available); return 0
 def run_root(args):
     result=subprocess.run(["pkexec",*args],text=True,capture_output=True)
     if result.returncode:raise RuntimeError((result.stderr or result.stdout or "systeemactie mislukt").strip())
 def install():
-    data=manifest(); files,system_files=data.get("files",[]),data.get("system_files",[]); missing,system_missing=missing_packages(data,"required_packages"),missing_packages(data,"system_packages"); policy=data.get("system_policy",{}); do_refresh=bool(system_missing or system_files); actions=int(do_refresh and policy.get("refresh_xbps_metadata"))+int(do_refresh and policy.get("refresh_certificates")); total,done,stamp=len(files)+len(system_files)+bool(missing or system_missing)+actions,0,time.strftime("%Y%m%d-%H%M%S")
+    data=manifest(); old=installed(); files,system_files=data.get("files",[]),data.get("system_files",[]); missing,system_missing=missing_packages(data,"required_packages"),missing_packages(data,"system_packages"); policy=data.get("system_policy",{}); do_refresh=bool(system_missing or system_files); actions=int(do_refresh and policy.get("refresh_xbps_metadata"))+int(do_refresh and policy.get("refresh_certificates")); unchanged=old.get("version")==data["version"] and not any(item_changed(i) for i in files) and not any(item_changed(i,True) for i in system_files) and not missing and not system_missing
+    if unchanged:
+        emit("status",message=f"Versie {data['version']} is al geïnstalleerd; dubbele installatie overgeslagen"); emit("result",ok=True,version=data["version"],release_name=data.get("release_name",data["version"]),installed_at=old.get("installed_at"),history=old.get("history",[]),update_available=False,already_installed=True); return 0
+    total,done,stamp=len(files)+len(system_files)+bool(missing or system_missing)+actions,0,time.strftime("%Y%m%d-%H%M%S")
     STATE.mkdir(parents=True,exist_ok=True); BACKUPS.mkdir(parents=True,exist_ok=True); stage,backup_dir=Path(tempfile.mkdtemp(prefix="aurora-update-",dir=STATE.parent)),BACKUPS/stamp
     try:
         emit("status",message="Manifest opgehaald en gecontroleerd"); base=MANIFEST_URL.rsplit("/",1)[0]
@@ -75,7 +79,8 @@ def install():
             target.parent.mkdir(parents=True,exist_ok=True); os.replace(source,target); os.chmod(target,int(item.get("mode","644"),8))
         for item in system_files:
             target,source=system_target_path(item["target"]),stage/item["source"].lstrip("/"); run_root(["install","-D","-m",item.get("mode","644"),str(source),str(target)])
-        INSTALLED.write_text(json.dumps({"version":data["version"],"installed_at":stamp,"manifest":MANIFEST_URL},indent=2),encoding="utf-8"); emit("progress",fraction=1.0,message="Aurora-update voltooid"); emit("result",ok=True,version=data["version"],backup=str(backup_dir),update_available=False); notify("Aurora is bijgewerkt",f"Aurora componentversie {data['version']} is geïnstalleerd."); return 0
+        history=[entry for entry in old.get("history",[]) if entry.get("version")!=data["version"]]; history.append({"version":data["version"],"release_name":data.get("release_name",data["version"]),"installed_at":stamp,"manifest":MANIFEST_URL}); history=history[-20:]
+        record={"version":data["version"],"release_name":data.get("release_name",data["version"]),"installed_at":stamp,"manifest":MANIFEST_URL,"history":history}; INSTALLED.write_text(json.dumps(record,indent=2),encoding="utf-8"); HISTORY.write_text(json.dumps(history,indent=2),encoding="utf-8"); emit("progress",fraction=1.0,message="Aurora-update voltooid"); emit("result",ok=True,version=data["version"],release_name=data.get("release_name",data["version"]),installed_at=stamp,history=history,backup=str(backup_dir),update_available=False); notify("Aurora is bijgewerkt",f"Aurora {data.get('release_name',data['version'])} ({data['version']}) is geïnstalleerd."); return 0
     except Exception as exc: emit("result",ok=False,error=str(exc),backup=str(backup_dir) if backup_dir.exists() else None); notify("Aurora-update mislukt",str(exc)); return 1
     finally: shutil.rmtree(stage,ignore_errors=True)
 def main():
@@ -88,7 +93,7 @@ def build_card():
     """Build the Aurora-only updater card used by Aurora Settings."""
     import gi
     gi.require_version("Gtk", "4.0")
-    from gi.repository import Gtk, GLib
+    from gi.repository import Gtk, GLib, GdkPixbuf
     frame = Gtk.Frame(); frame.add_css_class("card"); frame.set_margin_bottom(12)
     outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
     for side in (16,):
@@ -107,6 +112,7 @@ def build_card():
     title = Gtk.Label(label="<b>Aurora Updates</b>", use_markup=True, xalign=0.5); title.add_css_class("title-3"); outer.append(title)
     intro = Gtk.Label(label="Werk Aurora-componenten bij via de beheerde GitHub-repository. Void- en Flatpak-updates blijven in hun eigen beheerpagina.", wrap=True, xalign=0.0); outer.append(intro)
     status = Gtk.Label(label="Nog niet gecontroleerd.", wrap=True, xalign=0.0); outer.append(status)
+    installed_info = Gtk.Label(label="Geïnstalleerde versie: nog niet vastgesteld", wrap=True, xalign=0.0); installed_info.add_css_class("dim-label"); outer.append(installed_info)
     progress = Gtk.ProgressBar(); progress.set_show_text(True); progress.set_fraction(0); progress.set_text("Wachten"); outer.append(progress)
     notes = Gtk.Label(label="", wrap=True, xalign=0.0); notes.add_css_class("dim-label"); outer.append(notes)
     buttons = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -121,9 +127,11 @@ def build_card():
             progress.set_text(event.get("message", "Bezig…"))
         elif event.get("event") == "result":
             if event.get("ok"):
+                if event.get("installed_at"):
+                    installed_info.set_text(f"Geïnstalleerd: {event.get('release_name', event.get('version'))} · versie {event.get('version')} · {event.get('installed_at')}")
                 files, packages = event.get("files", []), event.get("packages", [])
                 if event.get("update_available"):
-                    status.set_text(f"Aurora {event.get('version')} beschikbaar: {len(files)} bestand(en), {len(packages)} afhankelijkheid(en).")
+                    status.set_text(f"{event.get('release_name', 'Aurora')} ({event.get('version')}) beschikbaar: {len(files)} bestand(en), {len(packages)} afhankelijkheid(en).")
                     install_button.set_sensitive(True)
                 else:
                     status.set_text(f"Aurora {event.get('version', 'componenten')} is actueel.")

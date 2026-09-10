@@ -1,0 +1,56 @@
+#!/bin/sh
+set -eu
+state="$HOME/.config/aurora/settings.json"
+[ -r "$state" ] || exit 0
+
+get() {
+    python3 - "$state" "$1" <<'PY'
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f: d=json.load(f)
+    v=d.get(sys.argv[2], "")
+    print(str(v).lower() if isinstance(v, bool) else v)
+except Exception:
+    pass
+PY
+}
+
+profile="$(get power.profile)"
+[ -n "$profile" ] && command -v powerprofilesctl >/dev/null 2>&1 && powerprofilesctl set "$profile" >/dev/null 2>&1 || true
+if [ "$(get power.auto-battery-profile)" = true ] && command -v upower >/dev/null 2>&1; then
+    battery="$(upower -e 2>/dev/null | grep -m1 '/battery_' || true)"
+    state=""
+    if [ -n "$battery" ]; then
+        state="$(upower -i "$battery" 2>/dev/null | awk -F: '/state:/ {gsub(/[[:space:]]/,"",$2); print $2; exit}' || true)"
+    fi
+    [ "$state" = discharging ] && command -v powerprofilesctl >/dev/null 2>&1 && powerprofilesctl set power-saver >/dev/null 2>&1 || true
+fi
+brightness="$(get display.brightness)"
+[ -n "$brightness" ] && command -v brightnessctl >/dev/null 2>&1 && brightnessctl set "${brightness}%" >/dev/null 2>&1 || true
+
+speed="$(get mouse.accel-speed)"
+[ -n "$speed" ] && command -v aurora-niri-input >/dev/null 2>&1 && aurora-niri-input set mouse.accel-speed "$speed" >/dev/null 2>&1 || true
+natural="$(get mouse.natural-scroll)"
+[ -n "$natural" ] && command -v aurora-niri-input >/dev/null 2>&1 && aurora-niri-input set mouse.natural-scroll "$([ "$natural" = true ] && echo on || echo off)" >/dev/null 2>&1 || true
+left="$(get mouse.left-handed)"
+[ -n "$left" ] && command -v aurora-niri-input >/dev/null 2>&1 && aurora-niri-input set mouse.left-handed "$([ "$left" = true ] && echo on || echo off)" >/dev/null 2>&1 || true
+scale="$(get display.scale)"
+if [ -n "$scale" ] && command -v niri >/dev/null 2>&1; then
+    niri msg outputs 2>/dev/null | sed -n 's/^Output "\([^"]*\)".*/\1/p' | while read -r out; do
+        [ -n "$out" ] && niri msg output "$out" scale "$scale" >/dev/null 2>&1 || true
+    done
+fi
+
+night="$(get display.nightlight)"
+temp="$(get display.nightlight-temperature)"
+if [ "$night" = true ] && command -v wlsunset >/dev/null 2>&1; then
+    pkill wlsunset 2>/dev/null || true
+    wlsunset -t "${temp:-4000}" -T "${temp:-4000}" >/dev/null 2>&1 &
+fi
+
+if command -v wpctl >/dev/null 2>&1; then
+    out="$(get audio.output-volume)"; [ -n "$out" ] && wpctl set-volume @DEFAULT_AUDIO_SINK@ "$(awk "BEGIN {print $out/100}")" >/dev/null 2>&1 || true
+    inp="$(get audio.input-volume)"; [ -n "$inp" ] && wpctl set-volume @DEFAULT_AUDIO_SOURCE@ "$(awk "BEGIN {print $inp/100}")" >/dev/null 2>&1 || true
+    [ "$(get audio.output-muted)" = true ] && wpctl set-mute @DEFAULT_AUDIO_SINK@ 1 >/dev/null 2>&1 || true
+    [ "$(get audio.input-muted)" = true ] && wpctl set-mute @DEFAULT_AUDIO_SOURCE@ 1 >/dev/null 2>&1 || true
+fi

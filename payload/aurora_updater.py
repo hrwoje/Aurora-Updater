@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 """Aurora component updater with hash checks and a small, fixed system layer."""
 from __future__ import annotations
-import argparse, hashlib, json, os, re, shutil, subprocess, sys, tempfile, time, urllib.request
+import argparse, fcntl, hashlib, json, os, re, shutil, subprocess, sys, tempfile, time, urllib.request
 from pathlib import Path
 REPO="https://raw.githubusercontent.com/hrwoje/Aurora-Updater/main"; MANIFEST_URL=os.environ.get("AURORA_UPDATER_MANIFEST_URL",f"{REPO}/manifest.json")
 STATE=Path(os.environ.get("XDG_STATE_HOME",Path.home()/".local/state"))/"aurora-updater"; INSTALLED=STATE/"installed.json"; HISTORY=STATE/"history.json"; BACKUPS=STATE/"backups"
@@ -14,8 +14,72 @@ def notify(title,message):
 def fetch(url):
     req=urllib.request.Request(url,headers={"User-Agent":"Aurora-Updater/1"})
     with urllib.request.urlopen(req,timeout=12) as response: return response.read()
+def resolve_manifest_url():
+    """Lokale-bronterugval voor de ontwikkelmachine.
+
+    Normaal wordt de manifest van de gepubliceerde GitHub-bron gehaald. Is die
+    bron niet bereikbaar en staat er een lokale Aurora-werkrepo op deze machine,
+    dan wordt die gebruikt (zelfde geverifieerde flow als de expliciete
+    file://-modus). Op andere installaties verandert dit niets.
+    """
+    url=os.environ.get("AURORA_UPDATER_MANIFEST_URL",f"{REPO}/manifest.json")
+    if url.startswith(REPO):
+        try:
+            req=urllib.request.Request(url,headers={"User-Agent":"Aurora-Updater/1"})
+            with urllib.request.urlopen(req,timeout=12) as response: response.read(1)
+        except Exception:
+            local=Path.home()/"Aurora-Updater-work"/"manifest.json"
+            if local.is_file(): url=local.as_uri()
+    return url
+LOCKFILE=STATE/"run.lock"
+
+def acquire_lock():
+    """Eén installatie tegelijk: een tweede gelijktijdige run wordt geweigerd."""
+    STATE.mkdir(parents=True,exist_ok=True)
+    handle=open(LOCKFILE,"a+",encoding="ascii")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None
+    return handle
+
+def release_lock(handle):
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    handle.close()
+
+def _cleanup_stale_stage():
+    """Ruim achtergebleven staging-mappen ouder dan een uur op (bijv. na een kill)."""
+    cutoff=time.time()-3600
+    for path in STATE.parent.glob("aurora-update-*"):
+        try:
+            if path.is_dir() and path.stat().st_mtime < cutoff:
+                shutil.rmtree(path,ignore_errors=True)
+        except OSError:
+            continue
+
+def _prune_backups(keep=5):
+    """Houd alleen de nieuwste reservekopieën en ruim oudere op."""
+    if not BACKUPS.is_dir():
+        return 0
+    try:
+        backups=sorted(BACKUPS.iterdir(),key=lambda p: p.stat().st_mtime)
+    except OSError:
+        return 0
+    removed=0
+    for old in backups[:-keep]:
+        try:
+            shutil.rmtree(old,ignore_errors=True)
+            removed+=1
+        except OSError:
+            pass
+    return removed
+
 def manifest():
-    data=json.loads(fetch(MANIFEST_URL).decode())
+    data=json.loads(fetch(resolve_manifest_url()).decode())
     if data.get("schema")!=1 or not isinstance(data.get("version"),str) or not data.get("version"): raise ValueError("ongeldig Aurora-manifestschema")
     if "release_name" in data and (not isinstance(data["release_name"], str) or not data["release_name"].strip()): raise ValueError("ongeldige release-naam")
     for item in data.get("files",[])+data.get("system_files",[]):
@@ -39,6 +103,13 @@ def system_target_path(value):
     path=Path(value).resolve()
     if not any(path==root or root in path.parents for root in SYSTEM_PREFIXES):raise ValueError(f"systeemdoelpad valt buiten allowlist: {path}")
     return path
+def version_key(value):
+    """Versiestring naar sorteerbare sleutel (2026.09.10.15 -> [2026,9,10,15])."""
+    key=[]
+    for part in str(value).split("."):
+        key.append(int(part) if part.isdigit() else part)
+    return key
+
 def missing_packages(data,key):
     result=[]
     for package in data.get(key,[]):
@@ -49,21 +120,41 @@ def item_changed(item,system=False):
     return not target.exists() or hashlib.sha256(target.read_bytes()).hexdigest()!=item["sha256"]
 def check():
     data,old=manifest(),installed(); files=[i["target"] for i in data.get("files",[]) if item_changed(i)]; system_files=[i["target"] for i in data.get("system_files",[]) if item_changed(i,True)]
-    packages,system_packages=missing_packages(data,"required_packages"),missing_packages(data,"system_packages"); policy=data.get("system_policy",{}); actions=bool(system_files or system_packages) and bool(policy.get("refresh_xbps_metadata") or policy.get("refresh_certificates")); same_version=old.get("version")==data["version"]; available=bool(files or system_files or packages or system_packages or actions or (old.get("version") and not same_version))
-    emit("result",ok=True,version=data["version"],release_name=data.get("release_name",data["version"]),previous=old.get("version"),installed_at=old.get("installed_at"),history=old.get("history",[]),release_notes=data.get("release_notes",""),files=files,system_files=system_files,packages=packages,system_packages=system_packages,update_available=available); return 0
+    packages,system_packages=missing_packages(data,"required_packages"),missing_packages(data,"system_packages"); policy=data.get("system_policy",{}); actions=bool(system_files or system_packages) and bool(policy.get("refresh_xbps_metadata") or policy.get("refresh_certificates")); same_version=old.get("version")==data["version"]; downgrade=bool(old.get("version") and version_key(data["version"])<version_key(old["version"])); available=bool(files or system_files or packages or system_packages or actions or (old.get("version") and not same_version)) and not downgrade
+    if downgrade:
+        emit("status",message=f"De bron versie {data['version']} is ouder dan de geïnstalleerde versie {old['version']}; er wordt geen downgrade aangeboden.")
+    emit("result",ok=True,version=data["version"],release_name=data.get("release_name",data["version"]),previous=old.get("version"),installed_at=old.get("installed_at"),history=old.get("history",[]),release_notes=data.get("release_notes",""),files=files,system_files=system_files,packages=packages,system_packages=system_packages,update_available=available,downgrade=downgrade); return 0
 def run_root(args):
     result=subprocess.run(["pkexec",*args],text=True,capture_output=True)
     if result.returncode:raise RuntimeError((result.stderr or result.stdout or "systeemactie mislukt").strip())
 def install():
-    data=manifest(); old=installed(); files,system_files=data.get("files",[]),data.get("system_files",[]); missing,system_missing=missing_packages(data,"required_packages"),missing_packages(data,"system_packages"); policy=data.get("system_policy",{}); do_refresh=bool(system_missing or system_files); actions=int(do_refresh and policy.get("refresh_xbps_metadata"))+int(do_refresh and policy.get("refresh_certificates")); unchanged=old.get("version")==data["version"] and not any(item_changed(i) for i in files) and not any(item_changed(i,True) for i in system_files) and not missing and not system_missing
+    """Installeren met vergrendeling: nooit twee updates tegelijk."""
+    _cleanup_stale_stage()
+    lock=acquire_lock()
+    if lock is None:
+        emit("status",message="Er draait al een Aurora-update; deze dubbele uitvoer wordt overgeslagen.")
+        emit("result",ok=False,error="Er draait al een Aurora-update-installatie; dubbele uitvoer overgeslagen.")
+        return 1
+    try:
+        return _install()
+    finally:
+        release_lock(lock)
+
+def _install():
+    manifest_url=resolve_manifest_url(); data=manifest(); old=installed(); files,system_files=data.get("files",[]),data.get("system_files",[]); missing,system_missing=missing_packages(data,"required_packages"),missing_packages(data,"system_packages"); policy=data.get("system_policy",{}); do_refresh=bool(system_missing or system_files); actions=int(do_refresh and policy.get("refresh_xbps_metadata"))+int(do_refresh and policy.get("refresh_certificates"))
+    if old.get("version") and version_key(data["version"])<version_key(old["version"]):
+        emit("status",message=f"Downgrade geweigerd: bron {data['version']} is ouder dan de geïnstalleerde versie {old['version']}.")
+        emit("result",ok=False,error=f"Downgrade geweigerd: bronversie {data['version']} is ouder dan de geïnstalleerde versie {old['version']}.",update_available=False)
+        return 1
+    unchanged=old.get("version")==data["version"] and not any(item_changed(i) for i in files) and not any(item_changed(i,True) for i in system_files) and not missing and not system_missing
     if unchanged:
-        emit("status",message=f"Versie {data['version']} is al geïnstalleerd; dubbele installatie overgeslagen"); emit("result",ok=True,version=data["version"],release_name=data.get("release_name",data["version"]),installed_at=old.get("installed_at"),history=old.get("history",[]),update_available=False,already_installed=True); return 0
+        emit("status",message=f"Aurora is up-to-date — versie {data['version']} is al geïnstalleerd; dubbele installatie overgeslagen"); emit("result",ok=True,version=data["version"],release_name=data.get("release_name",data["version"]),installed_at=old.get("installed_at"),history=old.get("history",[]),update_available=False,already_installed=True); return 0
     total,done,stamp=len(files)+len(system_files)+bool(missing or system_missing)+actions,0,time.strftime("%Y%m%d-%H%M%S")
     STATE.mkdir(parents=True,exist_ok=True); BACKUPS.mkdir(parents=True,exist_ok=True); stage,backup_dir=Path(tempfile.mkdtemp(prefix="aurora-update-",dir=STATE.parent)),BACKUPS/stamp
     try:
-        emit("status",message="Manifest opgehaald en gecontroleerd"); base=MANIFEST_URL.rsplit("/",1)[0]
+        emit("status",message="Manifest opgehaald en gecontroleerd"); base=manifest_url.rsplit("/",1)[0]
         for item in files+system_files:
-            source=item["source"].lstrip("/"); raw=fetch(f"{REPO}/{source}" if MANIFEST_URL.startswith(REPO) else f"{base}/{source}")
+            source=item["source"].lstrip("/"); raw=fetch(f"{REPO}/{source}" if manifest_url.startswith(REPO) else f"{base}/{source}")
             if hashlib.sha256(raw).hexdigest()!=item["sha256"]:raise ValueError(f"SHA-256-controle mislukt voor {source}")
             out=stage/source; out.parent.mkdir(parents=True,exist_ok=True); out.write_bytes(raw); done+=1; emit("progress",fraction=done/max(total,1),message=f"Gedownload: {source}")
         if missing or system_missing:
@@ -79,8 +170,8 @@ def install():
             target.parent.mkdir(parents=True,exist_ok=True); os.replace(source,target); os.chmod(target,int(item.get("mode","644"),8))
         for item in system_files:
             target,source=system_target_path(item["target"]),stage/item["source"].lstrip("/"); run_root(["install","-D","-m",item.get("mode","644"),str(source),str(target)])
-        history=[entry for entry in old.get("history",[]) if entry.get("version")!=data["version"]]; history.append({"version":data["version"],"release_name":data.get("release_name",data["version"]),"installed_at":stamp,"manifest":MANIFEST_URL}); history=history[-20:]
-        record={"version":data["version"],"release_name":data.get("release_name",data["version"]),"installed_at":stamp,"manifest":MANIFEST_URL,"history":history}; INSTALLED.write_text(json.dumps(record,indent=2),encoding="utf-8"); HISTORY.write_text(json.dumps(history,indent=2),encoding="utf-8"); emit("progress",fraction=1.0,message="Aurora-update voltooid"); emit("result",ok=True,version=data["version"],release_name=data.get("release_name",data["version"]),installed_at=stamp,history=history,backup=str(backup_dir),update_available=False); notify("Aurora is bijgewerkt",f"Aurora {data.get('release_name',data['version'])} ({data['version']}) is geïnstalleerd."); return 0
+        history=[entry for entry in old.get("history",[]) if entry.get("version")!=data["version"]]; history.append({"version":data["version"],"release_name":data.get("release_name",data["version"]),"installed_at":stamp,"manifest":manifest_url}); history=history[-20:]
+        record={"version":data["version"],"release_name":data.get("release_name",data["version"]),"installed_at":stamp,"manifest":manifest_url,"history":history}; INSTALLED.write_text(json.dumps(record,indent=2),encoding="utf-8"); HISTORY.write_text(json.dumps(history,indent=2),encoding="utf-8"); emit("progress",fraction=1.0,message="Aurora-update voltooid"); pruned=_prune_backups(); emit("status",message=(f"Opruiming voltooid: {pruned} oude reservekopie(ën) verwijderd." if pruned else "Opruiming voltooid: geen oude reservekopieën.")); emit("result",ok=True,version=data["version"],release_name=data.get("release_name",data["version"]),installed_at=stamp,history=history,backup=str(backup_dir),update_available=False); notify("Aurora is bijgewerkt",f"Aurora {data.get('release_name',data['version'])} ({data['version']}) is geïnstalleerd."); return 0
     except Exception as exc: emit("result",ok=False,error=str(exc),backup=str(backup_dir) if backup_dir.exists() else None); notify("Aurora-update mislukt",str(exc)); return 1
     finally: shutil.rmtree(stage,ignore_errors=True)
 def main():
@@ -111,7 +202,7 @@ def build_card():
     logo.set_pixel_size(72); logo.set_halign(Gtk.Align.CENTER); logo.set_tooltip_text("Aurora OS"); outer.append(logo)
     title = Gtk.Label(label="<b>Aurora Updates</b>", use_markup=True, xalign=0.5); title.add_css_class("title-3"); outer.append(title)
     intro = Gtk.Label(label="Werk Aurora-componenten bij via de beheerde GitHub-repository. Void- en Flatpak-updates blijven in hun eigen beheerpagina.", wrap=True, xalign=0.0); outer.append(intro)
-    build_info = Gtk.Label(label="Updater-build 2026.09.10.12 · echte repositorystatus · watchdog 30 s", xalign=0.0); build_info.add_css_class("dim-label"); outer.append(build_info)
+    build_info = Gtk.Label(label="Updater-build 2026.09.10.15 · echte repositorystatus · update-vergrendeling · watchdog 30 s", xalign=0.0); build_info.add_css_class("dim-label"); outer.append(build_info)
     status = Gtk.Label(label="Nog niet gecontroleerd.", wrap=True, xalign=0.0); outer.append(status)
     previous = installed()
     previous_text = "Geïnstalleerde versie: nog niet vastgesteld"
@@ -147,6 +238,9 @@ def build_card():
                 if event.get("update_available"):
                     status.set_text(f"{event.get('release_name', 'Aurora')} ({event.get('version')}) beschikbaar: {len(files)} bestand(en), {len(packages)} pakket(en).")
                     install_button.set_sensitive(True)
+                elif event.get("downgrade"):
+                    status.set_text(f"De bron ({event.get('version')}) is ouder dan de geïnstalleerde versie ({event.get('previous')}); er wordt geen downgrade aangeboden.")
+                    install_button.set_sensitive(False)
                 else:
                     status.set_text(f"Aurora {event.get('version', 'componenten')} is up-to-date — er is geen nieuwe Aurora-update.")
                     install_button.set_sensitive(False)

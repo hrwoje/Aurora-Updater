@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": "2026.09.10.13",
+  "version": "2026.09.10.16",
   "channel": "stable",
-  "release_notes": "Added an explicit stop control and runtime build marker. Stalled checks can always be stopped and retried.",
+  "release_notes": "Downgrade-bescherming: een bron die ouder is dan de geïnstalleerde versie wordt nooit aangeboden of geïnstalleerd. Verder: update-vergrendeling, opruiming van staging en oude reservekopieën, en de eerdere fixes.",
   "required_packages": [
     "wl-clipboard",
     "ImageMagick",
@@ -16,13 +16,19 @@
     {
       "source": "payload/aurora_updater.py",
       "target": "~/.local/bin/aurora_updater.py",
-      "sha256": "91c2b9721543d1a8b1273393976b2a06085a081954b3604386f9c84cfe1ef547",
+      "sha256": "369f14c7f32f02d0dd2d58fc6aad9f2f55e9aff6c99d944b3791878d886508f3",
       "mode": "755"
     },
     {
       "source": "payload/aurora-settings",
       "target": "~/.local/bin/aurora-settings",
-      "sha256": "5cc0c7b137a6fc1eb8c2fa5fe26e9edf7929444eddc6d5e9866ee7b7da1075b7",
+      "sha256": "a00ebbdfd0e9c6a0cfa74c5b1b29f44ee178fd448ab33e94cbeb351192a915c8",
+      "mode": "755"
+    },
+    {
+      "source": "payload/aurora-settings-restore",
+      "target": "~/.local/bin/aurora-settings-restore",
+      "sha256": "37517fc870815b23ae69d153eec8c8db96dc55f30e106117be3ba9b4d22f6c8c",
       "mode": "755"
     },
     {
@@ -34,7 +40,7 @@
     {
       "source": "payload/aurora-ai-manager",
       "target": "~/.local/bin/aurora-ai-manager",
-      "sha256": "c7fd09e4bf49f9c793fc8343f6ff45763bee154aba695bd1917062cae10cf499",
+      "sha256": "3ca617274ada8f461f0e2b606fe81ede7c20e831761d09417bbc9c5a3e652a59",
       "mode": "755"
     },
     {
@@ -75,5 +81,5 @@
     "file": "LICENSE",
     "copyright": "Copyright (c) 2026 Hrwoje Dabo, media4now.nl"
   },
-  "release_name": "Aurora Updates Stop & Retry"
+  "release_name": "Aurora updater: downgrade-bescherming"
 }

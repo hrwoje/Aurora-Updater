@@ -351,6 +351,65 @@ def run_ufw(*args, timeout=120):
         return None
 
 
+def ufw_status_summary():
+    """Echte UFW-status zonder root uit /etc/ufw/ufw.conf en /etc/default/ufw.
+
+    De regelsbestanden user.rules/user6.rules zijn root-only; die worden alleen
+    gelezen als ze leesbaar zijn, anders verwijst de interface naar de
+    beheerdersknop. Er worden geen waarden verzonnen.
+    """
+    enabled = False
+    try:
+        with open("/etc/ufw/ufw.conf", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith("ENABLED="):
+                    enabled = line.split("=", 1)[1].strip().lower() == "yes"
+    except OSError:
+        pass
+    policies = {}
+    try:
+        with open("/etc/default/ufw", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith("DEFAULT_"):
+                    key, _, value = line.partition("=")
+                    policies[key] = value.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    lines = [
+        "Status: actief (UFW ingeschakeld in /etc/ufw/ufw.conf)" if enabled
+        else "Status: inactief (UFW staat uit in /etc/ufw/ufw.conf)",
+        "Standaardbeleid: inkomend {0}, uitgaand {1}, doorgestuurd {2}".format(
+            policies.get("DEFAULT_INPUT_POLICY", "onbekend"),
+            policies.get("DEFAULT_OUTPUT_POLICY", "onbekend"),
+            policies.get("DEFAULT_FORWARD_POLICY", "onbekend"),
+        ),
+    ]
+    rule_texts = []
+    readable = 0
+    for path in ("/etc/ufw/user.rules", "/etc/ufw/user6.rules"):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line.startswith("### tuple ###"):
+                        parts = line.split()
+                        if len(parts) >= 4:
+                            rule_texts.append(" ".join(parts[3:]))
+            readable += 1
+        except OSError:
+            continue
+    if readable and rule_texts:
+        lines.append(f"Eigen poortregels ({len(rule_texts)}):")
+        lines.extend("  " + t for t in rule_texts)
+    elif readable:
+        lines.append("Geen eigen (user) firewallregels gevonden.")
+    else:
+        lines.append("Poortregels staan in /etc/ufw/user.rules (alleen voor beheerders leesbaar).")
+    return {"enabled": enabled, "lines": lines}
+
+
 def esc(s):
     return GLib.markup_escape_text(str(s) if s is not None else "")
 
@@ -1360,18 +1419,37 @@ class AuroraSettingsApp(Gtk.Application):
             ("debug", "Void Linux Debug (Symbolen voor ontwikkelaars en crashrapporten)", "void-repo-debug"),
         ]
 
+        def repo_is_enabled(r_name, r_pkg):
+            # Echte status: een conf-bestand met dit repo-pad in /etc/xbps.d of
+            # /usr/share/xbps.d, of het bijbehorende void-repo-* pakket.
+            for conf_dir in ("/etc/xbps.d", "/usr/share/xbps.d"):
+                for conf in glob.glob(os.path.join(conf_dir, "*.conf")):
+                    try:
+                        for line in open(conf, encoding="utf-8", errors="ignore"):
+                            m = re.match(r"^\s*repository\s*=\s*(\S+)", line, re.I)
+                            if m and m.group(1).rstrip("/").split("/")[-1] == r_name:
+                                return True
+                    except OSError:
+                        continue
+            chk = run_cmd("xbps-query", "-s", r_pkg)
+            return bool(chk and chk.returncode == 0)
+
         for idx, (r_name, r_desc, r_pkg) in enumerate(repos):
-            is_active = os.path.exists(f"/usr/share/xbps.d/*{r_name}*") or (run_cmd("xbps-query", "-s", r_pkg) and run_cmd("xbps-query", "-s", r_pkg).returncode == 0)
+            is_active = repo_is_enabled(r_name, r_pkg)
             sw = aurora_switch()
             sw.set_active(is_active)
 
-            def make_repo_toggle(repo_key=r_name):
+            def make_repo_toggle(repo_key=r_name, pkg=r_pkg):
                 def on_toggle(s, state):
                     action = "repo-enable" if state else "repo-disable"
                     append_upd_log(f"Repository {repo_key} wijzigen...")
                     def worker():
                         run_admin_cmd(action, repo_key)
-                        GLib.idle_add(lambda: append_upd_log(f"Repository {repo_key} {'ingeschakeld' if state else 'uitgeschakeld'}."))
+                        def ui_done():
+                            actual = repo_is_enabled(repo_key, pkg)
+                            s.set_active(actual)
+                            append_upd_log(f"Repository {repo_key} {'ingeschakeld' if actual else 'uitgeschakeld'}.")
+                        GLib.idle_add(ui_done)
                     threading.Thread(target=worker, daemon=True).start()
                 return on_toggle
 
@@ -1442,14 +1520,18 @@ class AuroraSettingsApp(Gtk.Application):
         box.append(theme_card)
 
         # Noctalia Accentkleuren
-        accent_card = self.create_card_group("Systeem-accentkleur", "Past de hoofdkleur aan voor interfaceknoppen, accenten en sliders")
+        accent_card = self.create_card_group(
+            "Systeem-accentkleur",
+            "De desktopaccent volgt het Noctalia-palet (wallpaper); hier stel je de GTK-accentkleur en de Papirus-mapkleur in en sla je de keuze op",
+        )
         accent_grid = Gtk.Grid(column_spacing=8, row_spacing=8)
         accents = [
-            ("Blauw", "#3584e4"), ("Paars", "#9141ac"), ("Rood", "#e01b24"),
-            ("Oranje", "#ff7800"), ("Groen", "#33d17a"), ("Geel", "#f6d32d"),
-            ("Teal", "#00897b"), ("Roze", "#f48fb1"), ("Nordic", "#88c0d0")
+            ("Blauw", "#3584e4", "blue"), ("Paars", "#9141ac", "violet"), ("Rood", "#e01b24", "red"),
+            ("Oranje", "#ff7800", "orange"), ("Groen", "#33d17a", "green"), ("Geel", "#f6d32d", "yellow"),
+            ("Teal", "#00897b", "teal"), ("Roze", "#f48fb1", "pink"), ("Nordic", "#88c0d0", "nordic")
         ]
-        for i, (aname, ahex) in enumerate(accents):
+        accent_status = Gtk.Label(label="Kies een accentkleur.", xalign=0.0, wrap=True)
+        for i, (aname, ahex, fcolor) in enumerate(accents):
             btn = Gtk.Button()
             btn.set_size_request(38, 38)
             btn.set_tooltip_text(aname)
@@ -1459,13 +1541,15 @@ class AuroraSettingsApp(Gtk.Application):
             css_prov.load_from_data(f"box {{ background-color: {ahex}; border-radius: 6px; }}".encode())
             swatch.get_style_context().add_provider(css_prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
             btn.set_child(swatch)
-            btn.connect("clicked", lambda b, h=ahex: (
-                set_setting("appearance.accent", h),
-                run_cmd("noctalia", "msg", "accent-set", h),
+            def apply_accent(b, h=ahex, fc=fcolor, nm=aname):
+                set_setting("appearance.accent", h)
                 run_cmd("gsettings", "set", "org.gnome.desktop.interface", "accent-color", h)
-            ))
+                run_cmd("aurora-folder-color", "global", "set", fc)
+                accent_status.set_text(f"Accentkleur {nm} ({h}) opgeslagen en toegepast op GTK en de mapkleur.")
+            btn.connect("clicked", apply_accent)
             accent_grid.attach(btn, i % 9, i // 9, 1, 1)
         accent_card.get_last_child().append(accent_grid)
+        accent_card.get_last_child().append(accent_status)
         box.append(accent_card)
 
         # Bureaubladachtergronden
@@ -1779,10 +1863,24 @@ class AuroraSettingsApp(Gtk.Application):
                 row_idx += 1
             grid.attach(Gtk.Label(label="<b>Schaal actieve monitor:</b>", use_markup=True, xalign=0.0), 0, row_idx, 1, 1)
             scale_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            scale_status = Gtk.Label(label="", xalign=0.0)
             for factor in ("1.0", "1.25", "1.5", "2.0"):
                 btn = Gtk.Button(label=f"{int(float(factor)*100)}%")
-                btn.connect("clicked", lambda b, f=factor: (set_setting("display.scale", f), run_cmd("niri", "msg", "action", "scale-view", f)))
+                def apply_scale(b, f=factor):
+                    set_setting("display.scale", f)
+                    applied = 0
+                    for out in outputs:
+                        out_name = out.get("name")
+                        if not out_name:
+                            continue
+                        res = run_cmd("niri", "msg", "output", out_name, "scale", f)
+                        if res and res.returncode == 0:
+                            persist_output(out_name, scale=f)
+                            applied += 1
+                    scale_status.set_text(f"Schaal {f} toegepast op {applied} monitor(en) en opgeslagen in de Niri-configuratie.")
+                btn.connect("clicked", apply_scale)
                 scale_box.append(btn)
+            scale_box.append(scale_status)
             grid.attach(scale_box, 1, row_idx, 2, 1)
         else:
             fallback = niri_res.stdout if niri_res and niri_res.stdout else "Geen actieve monitorinformatie; Niri-socket niet bereikbaar."
@@ -2755,8 +2853,8 @@ class AuroraSettingsApp(Gtk.Application):
         fw_card = self.create_card_group("UFW Firewall", "Beheer netwerktoegang en inkomende/uitgaande poortregels")
         fw_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
 
-        res = run_cmd("ufw", "status")
-        is_active = "Status: active" in (res.stdout if res else "")
+        fw_state = ufw_status_summary()
+        is_active = fw_state["enabled"]
         sw_fw = aurora_switch()
         sw_fw.set_active(is_active)
 
@@ -2767,16 +2865,35 @@ class AuroraSettingsApp(Gtk.Application):
         rules_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
         rules_box.set_margin_top(10)
 
+        def show_verbose_fw(b):
+            # Volledige ufw-status op aanvraag via polkit (beheerdersvraag).
+            res = run_admin_cmd("firewall", "status")
+            out = (res.stdout or "") + (("\n" + res.stderr) if res and res.stderr else "")
+            while child := rules_box.get_first_child():
+                rules_box.remove(child)
+            for line in out.splitlines() or ["Geen uitvoer."]:
+                lbl = Gtk.Label(label=esc(line))
+                lbl.add_css_class("monospace")
+                lbl.set_xalign(0.0)
+                rules_box.append(lbl)
+            btn_back = Gtk.Button(label="Terug naar overzicht")
+            btn_back.connect("clicked", lambda b: refresh_fw_rules())
+            rules_box.append(btn_back)
+
         def refresh_fw_rules():
             while child := rules_box.get_first_child():
                 rules_box.remove(child)
 
-            res = run_cmd("ufw", "status", "verbose")
-            text = res.stdout if res and res.stdout else "Status niet beschikbaar"
-            lbl = Gtk.Label(label=esc(text))
-            lbl.add_css_class("monospace")
-            lbl.set_xalign(0.0)
-            rules_box.append(lbl)
+            state = ufw_status_summary()
+            for line in state["lines"]:
+                lbl = Gtk.Label(label=esc(line))
+                lbl.add_css_class("monospace")
+                lbl.set_xalign(0.0)
+                rules_box.append(lbl)
+
+            btn_verbose = Gtk.Button(label="Volledige status als beheerder opvragen")
+            btn_verbose.connect("clicked", show_verbose_fw)
+            rules_box.append(btn_verbose)
 
         refresh_fw_rules()
         fw_card.get_last_child().append(rules_box)
@@ -2871,7 +2988,10 @@ class AuroraSettingsApp(Gtk.Application):
         def on_fw_toggle(s, state):
             act = "enable" if state else "disable"
             run_admin_cmd("firewall", act)
-            refresh_fw_rules()
+            def ui_done():
+                s.set_active(ufw_status_summary()["enabled"])
+                refresh_fw_rules()
+            GLib.idle_add(ui_done)
 
         sw_fw.connect("state-set", on_fw_toggle)
         box.append(fw_card)

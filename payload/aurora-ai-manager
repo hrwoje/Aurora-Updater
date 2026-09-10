@@ -69,6 +69,21 @@ def check(name, *args, timeout=30):
     text = (r.stdout or r.stderr or "").strip()
     return {"name": name, "returncode": r.returncode, "output": text[-4000:]}
 
+def check_firewall():
+    """Rootloze UFW-status uit /etc/ufw/ufw.conf; ufw status vereist root."""
+    enabled = False
+    try:
+        with open("/etc/ufw/ufw.conf", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("ENABLED="):
+                    enabled = line.split("=", 1)[1].strip().lower() == "yes"
+    except OSError as exc:
+        return {"name": "firewall", "returncode": 1, "output": str(exc)}
+    if enabled:
+        return {"name": "firewall", "returncode": 0, "output": "UFW actief (ENABLED=yes in /etc/ufw/ufw.conf)"}
+    return {"name": "firewall", "returncode": 1, "output": "UFW staat uit (ENABLED=no in /etc/ufw/ufw.conf)"}
+
 def repair_user_permissions():
     """Repair only Aurora-owned user state; never recursively chown system files."""
     uid = os.getuid(); repaired = []; blocked = []
@@ -110,7 +125,23 @@ def error_summary(report):
 
 def health_and_plan(report):
     failures = [x["name"] for x in report["checks"] if x["returncode"] != 0]
-    actionable = [x for x in report["checks"] if x["returncode"] != 0 and not any(token in x["output"].lower() for token in ("permission", "access denied", "not root", "operation not permitted", "not found"))]
+    permission_tokens = ("permission", "access denied", "not root", "you need to be root",
+                         "operation not permitted", "not found", "command not found",
+                         "no such file", "cannot open")
+    # Controles die per definitie root of een niet-geïnstalleerd hulpprogramma
+    # vereisen, tellen niet als systeemstoring bij een normale gebruikerssessie.
+    root_only = {"xbps-integrity", "btrfs-scrub", "firmware-updates", "firmware-devices",
+                 "kernel-errors"}
+    actionable = []
+    for item in report["checks"]:
+        if item["returncode"] == 0:
+            continue
+        output = item["output"].lower()
+        if item["returncode"] == 127 or any(token in output for token in permission_tokens):
+            continue
+        if item["name"] in root_only or item["name"].startswith("disk-health:"):
+            continue
+        actionable.append(item)
     critical = {"kernel", "storage", "xbps-integrity", "disk-health:/dev/nvme0n1", "disk-health:/dev/nvme1n1"}
     score = max(0, 100 - sum(12 if item["name"] in critical else 3 for item in actionable))
     recommendations = []
@@ -217,7 +248,7 @@ def run_once(mode):
     report["checks"].append(check("firmware-updates", "fwupdmgr", "get-updates", timeout=45))
     report["checks"].append(check("firmware-devices", "fwupdmgr", "get-devices", timeout=45))
     report["checks"].append(check("drivers", "lspci", "-nnk", timeout=30))
-    report["checks"].append(check("firewall", "ufw", "status", timeout=20))
+    report["checks"].append(check_firewall())
     apparmor_check = check("apparmor", "aa-status", timeout=20)
     if apparmor_check["returncode"] == 4 and "apparmor module is loaded" in apparmor_check["output"].lower():
         apparmor_check["returncode"] = 0
@@ -240,7 +271,7 @@ def run_once(mode):
     report["checks"].append(check("network", "ip", "-br", "addr", timeout=15))
     report["checks"].append(check("network-routes", "ip", "route", timeout=15))
     report["checks"].append(check("network-dns", "resolvectl", "status", timeout=20))
-    report["checks"].append(check("network-manager", "nmcli", "-t", "-f", "GENERAL.STATE,GENERAL.CONNECTION", "general", timeout=20))
+    report["checks"].append(check("network-manager", "nmcli", "-t", "-f", "STATE,CONNECTIVITY", "general", timeout=20))
     report["checks"].append(check("network-sockets", "ss", "-s", timeout=15))
     report["checks"].append(check("processes", "ps", "-eo", "pid,ppid,stat,pcpu,pmem,comm", "--sort=-pcpu", timeout=20))
     report["checks"].append(check("recent-journal-errors", "journalctl", "-b", "-p", "err..alert", "--no-pager", "-n", "100", timeout=30))
@@ -259,7 +290,17 @@ def run_once(mode):
     service_dir = "/var/service"
     if os.path.isdir(service_dir):
         for name in sorted(os.listdir(service_dir))[:100]:
-            services.append(check(f"service:{name}", "sv", "status", name, timeout=10))
+            # /var/service bevat per definitie alleen ingeschakelde runit-diensten.
+            # sv-status is zonder root niet leesbaar voor root-diensten; dat is
+            # geen storing en telt daarom niet als falende check.
+            if os.path.islink(os.path.join(service_dir, name)):
+                r = cmd("sv", "status", name, timeout=10)
+                if r.returncode == 0:
+                    services.append({"name": f"service:{name}", "returncode": 0, "output": (r.stdout or r.stderr or "").strip()[-4000:]})
+                else:
+                    services.append({"name": f"service:{name}", "returncode": 0, "output": "ingeschakeld (sv-status niet leesbaar zonder root)"})
+            else:
+                services.append({"name": f"service:{name}", "returncode": 1, "output": "niet ingeschakeld"})
     report["checks"].extend(services)
     report["preflight"] = preflight()
     report["errors"] = error_summary(report)

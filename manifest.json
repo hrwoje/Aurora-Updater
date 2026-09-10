@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "version": "2026.09.10.10",
+  "version": "2026.09.10.11",
   "channel": "stable",
-  "release_notes": "Repository checks now have a GTK-main-loop watchdog that terminates a silent updater process after 30 seconds.",
+  "release_notes": "Added a visible updater build marker so the active runtime can be verified in Aurora Settings.",
   "required_packages": [
     "wl-clipboard",
     "ImageMagick",
@@ -15,7 +15,7 @@
     {
       "source": "payload/aurora_updater.py",
       "target": "~/.local/bin/aurora_updater.py",
-      "sha256": "874d27074019fe719ecb36aaa0b3971a8f1e8d88f392abe742b35c719b159983",
+      "sha256": "798082af8c26c676b208328ac20639ac577c6bd4eeec944800e6bb9a07f3e67f",
       "mode": "755"
     },
     {
@@ -74,5 +74,5 @@
     "file": "LICENSE",
     "copyright": "Copyright (c) 2026 Hrwoje Dabo, media4now.nl"
   },
-  "release_name": "Aurora Updates Hard Watchdog"
+  "release_name": "Aurora Updates Runtime Diagnostics"
 }

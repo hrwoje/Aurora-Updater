@@ -111,6 +111,7 @@ def build_card():
     logo.set_pixel_size(72); logo.set_halign(Gtk.Align.CENTER); logo.set_tooltip_text("Aurora OS"); outer.append(logo)
     title = Gtk.Label(label="<b>Aurora Updates</b>", use_markup=True, xalign=0.5); title.add_css_class("title-3"); outer.append(title)
     intro = Gtk.Label(label="Werk Aurora-componenten bij via de beheerde GitHub-repository. Void- en Flatpak-updates blijven in hun eigen beheerpagina.", wrap=True, xalign=0.0); outer.append(intro)
+    build_info = Gtk.Label(label="Updater-build 2026.09.10.10 · echte repositorystatus · watchdog 30 s", xalign=0.0); build_info.add_css_class("dim-label"); outer.append(build_info)
     status = Gtk.Label(label="Nog niet gecontroleerd.", wrap=True, xalign=0.0); outer.append(status)
     previous = installed()
     previous_text = "Geïnstalleerde versie: nog niet vastgesteld"

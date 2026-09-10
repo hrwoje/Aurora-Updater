@@ -396,6 +396,19 @@ def check_xbps_updates():
         return []
 
 
+def aurora_logo_image(size):
+    """Use the same Aurora logo that Limine/Noctalia branding references."""
+    logo_path = "/usr/share/aurora/logo.png"
+    if os.path.exists(logo_path):
+        try:
+            pix = GdkPixbuf.Pixbuf.new_from_file_at_scale(logo_path, size, size, True)
+            return Gtk.Image.new_from_pixbuf(pix)
+        except Exception:
+            pass
+    image = Gtk.Image.new_from_icon_name("aurora")
+    image.set_pixel_size(size)
+    return image
+
 def install_aurora_widget_style():
     """Give every Aurora page the same compact GTK4 control geometry."""
     display = Gdk.Display.get_default()
@@ -468,11 +481,11 @@ class AuroraSettingsApp(Gtk.Application):
 
         # HeaderBar
         header = Gtk.HeaderBar()
+        header_logo = aurora_logo_image(34)
+        header_logo.set_tooltip_text("Aurora OS")
+        header.pack_start(header_logo)
         header_content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         header_content.set_halign(Gtk.Align.CENTER)
-        header_logo = Gtk.Image.new_from_icon_name("aurora")
-        header_logo.set_pixel_size(30)
-        header_content.append(header_logo)
         header_title = Gtk.Label(label="Aurora-instellingen")
         header_title.add_css_class("heading")
         header_content.append(header_title)
@@ -588,8 +601,7 @@ class AuroraSettingsApp(Gtk.Application):
         box.set_margin_bottom(12)
         brand = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         brand.set_halign(Gtk.Align.CENTER)
-        brand_logo = Gtk.Image.new_from_icon_name("aurora")
-        brand_logo.set_pixel_size(58)
+        brand_logo = aurora_logo_image(58)
         brand.append(brand_logo)
         brand_name = Gtk.Label(label="<b>Aurora</b>", use_markup=True)
         brand_name.add_css_class("title-4")
@@ -643,6 +655,12 @@ class AuroraSettingsApp(Gtk.Application):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
         box.set_margin_top(20); box.set_margin_bottom(20); box.set_margin_start(24); box.set_margin_end(24)
         box.append(self.create_page_header("Systeemoverzicht", "Aurora OS besturingssysteem, hardware en herstelstatus", "help-about-symbolic"))
+
+        # Aurora Updates is the primary Aurora component entry and stays first.
+        if aurora_updater is not None:
+            box.append(aurora_updater.build_card())
+        else:
+            box.append(Gtk.Label(label="Aurora Updater is nog niet geïnstalleerd. Installeer de Aurora-component updater en start Aurora Settings opnieuw.", xalign=0.0, wrap=True))
 
         info_card = self.create_card_group("Besturingssysteem", "Aurora Linux systeemversie en architectuur")
         info_grid = Gtk.Grid(column_spacing=16, row_spacing=8)
@@ -886,13 +904,7 @@ class AuroraSettingsApp(Gtk.Application):
         ai_card.get_last_child().append(ai_box)
         box.append(ai_card)
 
-        # Aurora component updates are deliberately separate from Void XBPS
-        # and Flatpak updates shown on the Updates & Bronnen page.
-        if aurora_updater is not None:
-            box.append(aurora_updater.build_card())
-        else:
-            box.append(Gtk.Label(label="Aurora Updater is nog niet geïnstalleerd. Installeer de Aurora-component updater en start Aurora Settings opnieuw.", xalign=0.0, wrap=True))
-
+        # Aurora component updates are already placed at the top of this page.
         scrolled.set_child(box)
         return scrolled
 

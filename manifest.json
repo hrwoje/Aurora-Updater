@@ -15,13 +15,13 @@
     {
       "source": "payload/aurora_updater.py",
       "target": "~/.local/bin/aurora_updater.py",
-      "sha256": "803e0efbca6c03cd5ab3cfd25189fca1b1bb0bcf2d776c3bca5eb1b66c971112",
+      "sha256": "fdc368fd2445ac8fae1d0afaf56383235bfd16a510f8d23ed85a8c51fbca8569",
       "mode": "755"
     },
     {
       "source": "payload/aurora-settings",
       "target": "~/.local/bin/aurora-settings",
-      "sha256": "5ca83fec87ff52c8505f26421ed60168c5491ca8c3bacb5f187c5d670ee0280b",
+      "sha256": "39468547e3e9aa4a1e9c5771965c19fbbd26652a4567a95c222588440f8b007f",
       "mode": "755"
     },
     {
